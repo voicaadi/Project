@@ -17,6 +17,29 @@ jobs:
     name: Backend Tests
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: devops_ai_test
+          POSTGRES_USER: devops_user
+          POSTGRES_PASSWORD: ci-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devops_user -d devops_ai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: devops_ai_test
+      POSTGRES_USER: devops_user
+      POSTGRES_PASSWORD: ci-test-password
+      JWT_SECRET_KEY: ci-test-secret-not-for-production
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,11 +57,12 @@ jobs:
           pip install -r backend/requirements.txt
           pip install pytest
 
+      - name: Initialize test database
+        working-directory: backend
+        run: PYTHONPATH=. python -m app.database.init_db
+
       - name: Run backend tests
         working-directory: backend
-        env:
-          JWT_SECRET_KEY: ci-test-secret-not-for-production
-          POSTGRES_PASSWORD: ci-test-password
         run: PYTHONPATH=. python -m pytest -q
 
   frontend-build:

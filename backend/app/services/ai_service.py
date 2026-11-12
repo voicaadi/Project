@@ -2,28 +2,33 @@
 import os
 import time
 from pathlib import Path
+from functools import lru_cache
 
 from google import genai
 from dotenv import load_dotenv
 
-# Load .env from the project root
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(PROJECT_ROOT / ".env")
 
-api_key = os.getenv("GOOGLE_API_KEY")
-
-if not api_key:
-    raise RuntimeError("GOOGLE_API_KEY is missing from .env")
-
 MODEL = "gemini-3.5-flash"
 
-client = genai.Client(
-    api_key=api_key,
-    http_options={"timeout": 60000}
-)
+
+@lru_cache(maxsize=1)
+def get_gemini_client():
+    api_key = os.getenv("GOOGLE_API_KEY")
+
+    if not api_key:
+        raise RuntimeError("GOOGLE_API_KEY is not configured.")
+
+    return genai.Client(
+        api_key=api_key,
+        http_options={"timeout": 60000}
+    )
 
 
 def ask_gemini(message: str) -> str:
+    client = get_gemini_client()
+
     for attempt in range(3):
         try:
             response = client.models.generate_content(
