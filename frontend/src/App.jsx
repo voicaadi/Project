@@ -23,7 +23,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
-const API_URL = "http://localhost:8000";
+const API_URL = "";
 function App() {
   const [backend, setBackend] = useState("Checking...");
   const [message, setMessage] = useState("");
@@ -255,7 +255,7 @@ function App() {
     let cancelled = false;
     try {
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsHost = API_URL.replace(/^https?:\/\//, "");
+      const wsHost = window.location.host;
       socket = new WebSocket(
         `${wsProtocol}//${wsHost}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal/ws`
       );
@@ -786,7 +786,7 @@ function App() {
             <div className="health-list">
               <div className="health-item">
                 <div className="health-item-icon"><Server size={17} /></div>
-                <div><strong>FastAPI Backend</strong><small>localhost:8000</small></div>
+                <div><strong>FastAPI Backend</strong><small>/api</small></div>
                 <span className={`health-state ${backend === "Online" ? "ok" : "fail"}`}>
                   {backend === "Online" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}
                   {backend}
@@ -815,7 +815,7 @@ function App() {
               <ShieldCheck size={17} />
               <span>Monitoring is read-only. No container actions are performed from this dashboard.</span>
             </div>
-            <a className="docs-link" href="http://localhost:8000/docs" target="_blank" rel="noreferrer">
+            <a className="docs-link" href="/docs" target="_blank" rel="noreferrer">
               Open API documentation <ChevronRight size={15} />
             </a>
           </section>
