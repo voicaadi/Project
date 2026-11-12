@@ -1,12 +1,33 @@
+
 import docker
 from docker.errors import DockerException, NotFound
 
-client = docker.from_env()
+client = None
+
+
+def get_docker_client():
+    """Connect to Docker only when a Docker operation is requested."""
+    global client
+
+    if client is None:
+        try:
+            client = docker.from_env()
+            client.ping()
+        except DockerException as exc:
+            client = None
+            raise RuntimeError(
+                "Docker Engine is unavailable. "
+                "Docker operations are not yet configured for Kubernetes."
+            ) from exc
+
+    return client
 
 
 def get_containers():
     """Return container information for the dashboard."""
-    containers = client.containers.list(all=True)
+    docker_client = get_docker_client()
+    containers = docker_client.containers.list(all=True)
+
     return [
         {
             "id": container.short_id,
@@ -21,42 +42,50 @@ def get_containers():
 
 def get_docker_info():
     """Return Docker Engine information."""
-    return client.info()
+    return get_docker_client().info()
 
 
 def run_docker_operation(action: str, target: str | None = None) -> str:
     """Run a small set of approved, read-only Docker operations."""
     try:
+        docker_client = get_docker_client()
+
         if action == "ps":
-            containers = client.containers.list()
+            containers = docker_client.containers.list()
+
             if not containers:
                 return "No running containers."
 
             lines = ["CONTAINER ID\\tIMAGE\\tSTATUS\\tNAME"]
+
             for container in containers:
                 image = container.image.tags[0] if container.image.tags else "unknown"
                 lines.append(
                     f"{container.short_id}\\t{image}\\t{container.status}\\t{container.name}"
                 )
+
             return "\\n".join(lines)
 
         if action == "images":
-            images = client.images.list()
+            images = docker_client.images.list()
+
             if not images:
                 return "No Docker images found."
 
             lines = ["IMAGE\\tID\\tSIZE"]
+
             for image in images:
                 tags = ", ".join(image.tags) if image.tags else "<none>"
                 size_mb = round(image.attrs.get("Size", 0) / (1024 * 1024), 1)
                 lines.append(f"{tags}\\t{image.short_id}\\t{size_mb} MB")
+
             return "\\n".join(lines)
 
         if action in {"logs", "inspect"}:
             if not target or not target.strip():
                 raise ValueError("Select a container first.")
 
-            container = client.containers.get(target.strip())
+            container = docker_client.containers.get(target.strip())
 
             if action == "logs":
                 output = container.logs(

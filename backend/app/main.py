@@ -1,3 +1,7 @@
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+from app.security.rate_limit import limiter
+from app.api.device_routes import router as device_router
 from app.api.terminal_ws import router as terminal_ws_router
 from app.api.auth_routes import router as auth_router
 from dotenv import load_dotenv
@@ -24,9 +28,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler,
+)
+
 app.include_router(auth_router)
 app.include_router(workspace_router)
 app.include_router(terminal_ws_router)
+app.include_router(device_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,7 +48,7 @@ app.add_middleware(
         "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 

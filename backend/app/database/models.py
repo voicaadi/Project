@@ -1,4 +1,4 @@
-
+from sqlalchemy import Text
 from sqlalchemy import (
     Boolean,
     Column,
@@ -54,3 +54,42 @@ class Workspace(Base):
     )
 
     owner = relationship("User", back_populates="workspaces")
+
+class UserDevice(Base):
+    __tablename__ = "user_devices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    device_name = Column(String(150), nullable=False)
+    operating_system = Column(String(50), nullable=False)
+    device_token_hash = Column(String(255), nullable=False, unique=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    owner = relationship("User", backref="devices")
+
+
+class DevicePairing(Base):
+    __tablename__ = "device_pairings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    code_hash = Column(String(255), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    owner = relationship("User")

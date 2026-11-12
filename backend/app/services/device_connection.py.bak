@@ -1,0 +1,60 @@
+import hashlib
+from sqlalchemy.orm import Session
+from app.database.models import UserDevice
+import asyncio
+from fastapi import WebSocket
+
+
+class DeviceConnectionManager:
+    def __init__(self):
+        self.connections: dict[int, WebSocket] = {}
+        self.lock = asyncio.Lock()
+
+    async def connect(self, device_id: int, websocket: WebSocket):
+        async with self.lock:
+            previous = self.connections.get(device_id)
+            self.connections[device_id] = websocket
+
+        if previous and previous is not websocket:
+            try:
+                await previous.close(
+                    code=4001,
+                    reason="Replaced by a newer device connection",
+                )
+            except Exception:
+                pass
+
+    async def disconnect(
+        self,
+        device_id: int,
+        websocket: WebSocket,
+    ):
+        async with self.lock:
+            # Don't remove a newer connection accidentally.
+            if self.connections.get(device_id) is websocket:
+                self.connections.pop(device_id, None)
+
+    async def get_connection(self, device_id: int):
+        async with self.lock:
+            return self.connections.get(device_id)
+
+    async def is_connected(self, device_id: int) -> bool:
+        return await self.get_connection(device_id) is not None
+
+
+device_connections = DeviceConnectionManager()
+def authenticate_device(db: Session, device_token: str):
+    token_hash = hashlib.sha256(
+        device_token.encode("utf-8")
+    ).hexdigest()
+
+    device = (
+        db.query(UserDevice)
+        .filter(
+            UserDevice.device_token_hash == token_hash,
+            UserDevice.is_active.is_(True),
+        )
+        .first()
+    )
+
+    return device

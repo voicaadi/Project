@@ -9,7 +9,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 function App() {
   const [backend, setBackend] = useState("Checking...");
@@ -288,10 +288,9 @@ function App() {
 
     let cancelled = false;
     setTerminalError("");
-    const apiOrigin = new URL(API_URL);
-    const wsProtocol = apiOrigin.protocol === "https:" ? "wss:" : "ws:";
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(
-      `${wsProtocol}//${apiOrigin.host}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal/ws`
+      `${wsProtocol}//${window.location.host}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal/ws`
     );
     terminalSocketRef.current = socket;
     setTerminalConnection("Connecting");
@@ -500,7 +499,7 @@ function App() {
           <section className="panel health-panel" id="settings">
             <div className="panel-header"><div className="panel-title"><div className="panel-icon health-icon"><Activity size={19} /></div><div><h3>Account Health</h3><p>Service connection overview</p></div></div></div>
             <div className="health-list">
-              <div className="health-item"><div className="health-item-icon"><Server size={17} /></div><div><strong>FastAPI Backend</strong><small>localhost:8000</small></div><span className={`health-state ${backend === "Online" ? "ok" : "fail"}`}>{backend === "Online" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}{backend}</span></div>
+              <div className="health-item"><div className="health-item-icon"><Server size={17} /></div><div><strong>FastAPI Backend</strong><small>Same-origin API</small></div><span className={`health-state ${backend === "Online" ? "ok" : "fail"}`}>{backend === "Online" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}{backend}</span></div>
               <div className="health-item"><div className="health-item-icon"><FolderOpen size={17} /></div><div><strong>Personal Workspaces</strong><small>Account-scoped API</small></div><span className="health-state ok"><CircleCheck size={16} /> Connected</span></div>
               <div className="health-item"><div className="health-item-icon"><Cpu size={17} /></div><div><strong>Gemini AI</strong><small>AI response service</small></div><span className="health-state ok"><CircleCheck size={16} /> Configured</span></div>
             </div>
