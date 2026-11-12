@@ -41,6 +41,10 @@ function App() {
   const [dockerOnline, setDockerOnline] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [authMode, setAuthMode] = useState("login");
+  const [registerUsername, setRegisterUsername] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [loggedInUser, setLoggedInUser] = useState(null);
   const [loginError, setLoginError] = useState("");
@@ -132,6 +136,45 @@ function App() {
       setLoginError(error.message || "Could not log in.");
     }
   }
+  async function registerAccount(e) {
+    e.preventDefault();
+    setLoginError("");
+
+    if (registerPassword.length < 8) {
+      setLoginError("Password must contain at least 8 characters.");
+      return;
+    }
+    if (registerPassword !== registerConfirmPassword) {
+      setLoginError("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: loginEmail,
+          username: registerUsername,
+          password: registerPassword,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Registration failed.");
+
+      setLoginPassword(registerPassword);
+      setRegisterPassword("");
+      setRegisterConfirmPassword("");
+      setAuthMode("login");
+      setLoginError("Account created successfully! You can now log in.");
+    } catch (error) {
+      setLoginError(error.message || "Could not create account.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function runTerminalCommand(e) {
     e.preventDefault();
     const command = terminalCommand;
@@ -297,9 +340,9 @@ function App() {
           <img className="adrian-logo" src="https://cdn.simpleicons.org/nginx/009639" alt="" style={{"--x":"2.5%","--y":"81%","--w":"clamp(68px,8vw,118px)"}} />
           {/* Left inner column */}
           <img className="adrian-logo" src="https://cdn.simpleicons.org/jenkins/D24939" alt="" style={{"--x":"16%","--y":"7%","--w":"clamp(62px,7vw,104px)"}} />
-          <img className="adrian-logo" src="https://cdn.simpleicons.org/terraform/7B42BC" alt="" style={{"--x":"16%","--y":"31%","--w":"clamp(62px,7vw,104px)"}} />
-          <img className="adrian-logo" src="https://cdn.simpleicons.org/gitlab/FC6D26" alt="" style={{"--x":"16%","--y":"56%","--w":"clamp(62px,7vw,104px)"}} />
-          <img className="adrian-logo" src="https://cdn.simpleicons.org/prometheus/E6522C" alt="" style={{"--x":"16%","--y":"81%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/terraform/7B42BC" alt="" style={{"--x":"16%","--y":"38%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/gitlab/FC6D26" alt="" style={{"--x":"16%","--y":"21%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/prometheus/E6522C" alt="" style={{"--x":"16%","--y":"70%","--w":"clamp(62px,7vw,104px)"}} />
           {/* Right inner column */}
           <img className="adrian-logo" src="https://cdn.simpleicons.org/ansible/EE0000" alt="" style={{"--x":"76%","--y":"7%","--w":"clamp(62px,7vw,104px)"}} />
           <img className="adrian-logo" src="https://cdn.simpleicons.org/helm/0F1689" alt="" style={{"--x":"76%","--y":"31%","--w":"clamp(62px,7vw,104px)"}} />
@@ -333,8 +376,9 @@ function App() {
           .adrian-login-form label{margin-top:7px;font-size:10px;font-weight:800;letter-spacing:1px;color:#51445e}
           .adrian-login-form input{box-sizing:border-box;width:100%;min-height:48px;padding:12px 14px;background:#fffdf6;border:1.5px solid #8d7895;border-radius:14px;color:#302642;font:inherit}
           .adrian-login-form input:focus{outline:2px solid #dc78a8;outline-offset:1px}
-          .adrian-login-form button{margin-top:12px;min-height:48px;display:flex;justify-content:center;align-items:center;gap:9px;border:2px solid #40334d;border-radius:15px;background:#f2a8c9;color:#302642;font-weight:900;cursor:pointer}
+          .adrian-login-form button,.adrian-auth-switch{width:100%;box-sizing:border-box;margin-top:12px;min-height:48px;display:flex;justify-content:center;align-items:center;gap:9px;border:2px solid #40334d;border-radius:15px;background:#f2a8c9;color:#302642;font-weight:900;cursor:pointer;font:inherit;font-weight:900}
           .adrian-login-form button:disabled{opacity:.65;cursor:wait}
+          .adrian-auth-switch{margin-top:10px}
           .adrian-login-error{color:#b42342;font-size:13px;margin:0}
           .adrian-login-footer{display:flex;justify-content:space-between;gap:10px;margin-top:18px;padding-top:0;border-top:0;color:#356b70;font-size:9px;font-weight:700;letter-spacing:.5px}
           @media(max-width:1100px){.adrian-logo{opacity:.55;--w:clamp(48px,6vw,76px)!important}.adrian-logo-field{inset:0 0 0 0}}
@@ -352,21 +396,40 @@ function App() {
             <h2>Welcome back.</h2>
             <p>Sign in to access your dashboard, Adrian AI, Docker tools, and personal Ubuntu workspace.</p>
           </div>
-          <form className="adrian-login-form" onSubmit={loginToTerminal}>
+          <form className="adrian-login-form" onSubmit={authMode === "login" ? loginToTerminal : registerAccount}>
+            {authMode === "register" && <>
+              <label htmlFor="register-username">USERNAME</label>
+              <input id="register-username" type="text" value={registerUsername}
+                onChange={(e) => setRegisterUsername(e.target.value)} placeholder="Choose a username"
+                minLength={3} maxLength={100} autoComplete="username" required />
+            </>}
             <label htmlFor="adrian-login-email">EMAIL ADDRESS</label>
             <input id="adrian-login-email" type="email" value={loginEmail}
-              onChange={(e)=>setLoginEmail(e.target.value)} placeholder="you@example.com"
-              autoComplete="username" required />
+              onChange={(e) => setLoginEmail(e.target.value)} placeholder="you@example.com"
+              autoComplete="email" required />
             <label htmlFor="adrian-login-password">PASSWORD</label>
-            <input id="adrian-login-password" type="password" value={loginPassword}
-              onChange={(e)=>setLoginPassword(e.target.value)} placeholder="Enter your password"
-              autoComplete="current-password" required />
-            {loginError && <p className="adrian-login-error">{loginError}</p>}
+            <input id="adrian-login-password" type="password"
+              value={authMode === "login" ? loginPassword : registerPassword}
+              onChange={(e) => authMode === "login" ? setLoginPassword(e.target.value) : setRegisterPassword(e.target.value)}
+              placeholder="Enter your password"
+              autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              minLength={authMode === "register" ? 8 : undefined} required />
+            {authMode === "register" && <>
+              <label htmlFor="register-confirm-password">CONFIRM PASSWORD</label>
+              <input id="register-confirm-password" type="password" value={registerConfirmPassword}
+                onChange={(e) => setRegisterConfirmPassword(e.target.value)}
+                placeholder="Confirm your password" autoComplete="new-password" minLength={8} required />
+            </>}
+            {loginError && <p className="adrian-login-error" role="alert">{loginError}</p>}
             <button type="submit" disabled={loading}>
-              {loading ? <LoaderCircle size={17} className="spin"/> : <ShieldCheck size={17}/>}
-              LOGIN
+              {loading ? <LoaderCircle size={17} className="spin" /> : authMode === "login" ? <ShieldCheck size={17} /> : null}
+              {loading ? "PLEASE WAIT..." : authMode === "login" ? "LOGIN" : "CREATE ACCOUNT"}
             </button>
           </form>
+          <button type="button" className="adrian-auth-switch"
+            onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setLoginError(""); }}>
+            {authMode === "login" ? "REGISTER" : "BACK TO LOGIN"}
+          </button>
           <div className="adrian-login-footer">
             <span>API: {backend}</span><span>SECURE WORKSPACE ACCESS</span>
           </div>

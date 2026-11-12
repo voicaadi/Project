@@ -793,3 +793,22 @@ button { cursor: pointer; }
   .terminal-controls label { flex-basis: 100%; }
   .terminal-window-bar { flex-wrap: wrap; }
 }
+.adrian-auth-tabs {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.adrian-auth-tabs button {
+  flex: 1;
+  padding: 12px;
+  border: 2px solid #40334d;
+  background: #e9dff2;
+  color: #302642;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.adrian-auth-tabs button.active {
+  background: #f2a8c9;
+}
