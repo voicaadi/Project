@@ -1,972 +1,768 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-
+import { useEffect, useRef, useState } from "react";
 import {
-
-  Bot, LayoutDashboard, MessageSquare, Container, Terminal, FolderOpen,
-
-  Activity, Settings, Send, Server, Cpu, ShieldCheck, CircleCheck,
-
-  CircleAlert, LoaderCircle, RefreshCw, LogOut, Plus, Play, Square,
-
+  Bot,
+  LayoutDashboard,
+  MessageSquare,
+  Container,
+  Terminal,
+  FolderOpen,
+  Activity,
+  Settings,
+  Send,
+  Server,
+  Cpu,
+  HardDrive,
+  ShieldCheck,
+  CircleCheck,
+  CircleAlert,
+  ChevronRight,
+  LoaderCircle,
+  RefreshCw,
 } from "lucide-react";
-
 import { Terminal as XTerm } from "@xterm/xterm";
-
 import { FitAddon } from "@xterm/addon-fit";
-
 import "@xterm/xterm/css/xterm.css";
-
 import "./App.css";
-
-const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
-
+const API_URL = "http://localhost:8000";
 function App() {
-
   const [backend, setBackend] = useState("Checking...");
-
-  const [authMode, setAuthMode] = useState("login");
-
-  const [loginEmail, setLoginEmail] = useState("");
-
-  const [loginPassword, setLoginPassword] = useState("");
-
-  const [registerUsername, setRegisterUsername] = useState("");
-
-  const [accessToken, setAccessToken] = useState("");
-
-  const [loggedInUser, setLoggedInUser] = useState(null);
-
-  const [authLoading, setAuthLoading] = useState(false);
-
-  const [authError, setAuthError] = useState("");
-
-  const [workspaces, setWorkspaces] = useState([]);
-
-  const [workspaceId, setWorkspaceId] = useState("");
-
-  const [workspaceLoading, setWorkspaceLoading] = useState(false);
-
-  const [workspaceError, setWorkspaceError] = useState("");
-
-  const [newWorkspaceName, setNewWorkspaceName] = useState("My Linux Workspace");
-
-  const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
-
-  const [messages, setMessages] = useState([{
-
-    role: "assistant",
-
-    content: "Hello! I'm Adrian AI Assistant, powered by Google Gemini. Select your workspace and ask me a DevOps question.",
-
-  }]);
-
   const [message, setMessage] = useState("");
-
-  const [chatLoading, setChatLoading] = useState(false);
-
-  const [terminalConnection, setTerminalConnection] = useState("Disconnected");
-
-  const [terminalError, setTerminalError] = useState("");
-
-  const terminalSocketRef = useRef(null);
-
-  const xtermHostRef = useRef(null);
-
-  const xtermRef = useRef(null);
-
-  const fitAddonRef = useRef(null);
-
-  const selectedWorkspace = workspaces.find((w) => String(w.id) === String(workspaceId));
-
-  const workspaceStatus = selectedWorkspace?.status || "not_created";
-
-  const workspaceRunning = workspaceStatus === "running";
-
-  const apiFetch = useCallback((path, options = {}) => {
-
-    const headers = {
-
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-
-      ...options.headers,
-
-    };
-
-    return fetch(`${API_URL}${path}`, { ...options, headers });
-
-  }, [accessToken]);
-
-  useEffect(() => {
-
-    fetch(`${API_URL}/health`)
-
-      .then((r) => {
-
-        if (!r.ok) throw new Error("Backend unavailable");
-
-        return r.json();
-
-      })
-
-      .then(() => setBackend("Online"))
-
-      .catch(() => setBackend("Offline"));
-
-  }, []);
-
-  const loadWorkspaces = useCallback(async (token = accessToken) => {
-
-    if (!token) return;
-
-    setWorkspaceLoading(true);
-
-    setWorkspaceError("");
-
-    try {
-
-      const response = await fetch(`${API_URL}/api/workspaces/`, {
-
-        headers: { Authorization: `Bearer ${token}` },
-
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || "Could not load workspaces.");
-
-      const list = Array.isArray(data) ? data : data.workspaces || [];
-
-      setWorkspaces(list);
-
-      setWorkspaceId((current) => {
-
-        if (list.some((w) => String(w.id) === String(current))) return current;
-
-        return list.length ? String(list[0].id) : "";
-
-      });
-
-    } catch (error) {
-
-      setWorkspaceError(error.message || "Could not load workspaces.");
-
-    } finally {
-
-      setWorkspaceLoading(false);
-
-    }
-
-  }, [accessToken]);
-
-  useEffect(() => {
-
-    if (accessToken) loadWorkspaces(accessToken);
-
-  }, [accessToken, loadWorkspaces]);
-
-  async function authenticate(e) {
-
-    e.preventDefault();
-
-    if (authLoading) return;
-
-    setAuthLoading(true);
-
-    setAuthError("");
-
-    try {
-
-      const isRegister = authMode === "register";
-
-      const endpoint = isRegister ? "/api/auth/register" : "/api/auth/login";
-
-      const payload = isRegister
-
-        ? { email: loginEmail.trim(), username: registerUsername.trim(), password: loginPassword }
-
-        : { email: loginEmail.trim(), password: loginPassword };
-
-      const response = await fetch(`${API_URL}${endpoint}`, {
-
-        method: "POST",
-
-        headers: { "Content-Type": "application/json" },
-
-        body: JSON.stringify(payload),
-
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || `${isRegister ? "Registration" : "Login"} failed.`);
-
-      if (isRegister) {
-
-        setAuthMode("login");
-
-        setAuthError("");
-
-        setLoginPassword("");
-
-        alert("Account created. Please sign in.");
-
-        return;
-
-      }
-
-      if (!data.access_token) throw new Error("Login response did not include an access token.");
-
-      setAccessToken(data.access_token);
-
-      setLoggedInUser(data.user || { email: loginEmail.trim() });
-
-      setLoginPassword("");
-
-      setMessages([{
-
-        role: "assistant",
-
-        content: `Welcome${data.user?.username ? `, ${data.user.username}` : ""}! Your personal workspace is ready when you select or create one.`,
-
-      }]);
-
-    } catch (error) {
-
-      setAuthError(error.message || "Authentication failed.");
-
-    } finally {
-
-      setAuthLoading(false);
-
-    }
-
-  }
-
-  function logout() {
-
-    terminalSocketRef.current?.close(1000, "User logged out");
-
-    terminalSocketRef.current = null;
-
-    xtermRef.current?.dispose();
-
-    xtermRef.current = null;
-
-    setAccessToken("");
-
-    setLoggedInUser(null);
-
-    setWorkspaces([]);
-
-    setWorkspaceId("");
-
-    setMessages([{
-
+  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState([
+    {
       role: "assistant",
-
-      content: "You have been logged out. Sign in to access your own workspace.",
-
-    }]);
-
-    setTerminalConnection("Disconnected");
-
-    setTerminalError("");
-
-    setWorkspaceError("");
-
-    setLoginPassword("");
-
-  }
-
-  async function createWorkspace(e) {
-
-    e.preventDefault();
-
-    const name = newWorkspaceName.trim();
-
-    if (!name || workspaceActionLoading) return;
-
-    setWorkspaceActionLoading(true);
-
-    setWorkspaceError("");
-
-    try {
-
-      const response = await apiFetch("/api/workspaces/", {
-
-        method: "POST",
-
-        body: JSON.stringify({ name }),
-
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || "Could not create workspace.");
-
-      await loadWorkspaces();
-
-      if (data.id) setWorkspaceId(String(data.id));
-
-    } catch (error) {
-
-      setWorkspaceError(error.message);
-
-    } finally {
-
-      setWorkspaceActionLoading(false);
-
-    }
-
-  }
-
-  async function changeWorkspaceState(action) {
-
-    if (!workspaceId || workspaceActionLoading) return;
-
-    setWorkspaceActionLoading(true);
-
-    setWorkspaceError("");
-
-    try {
-
-      const response = await apiFetch(`/api/workspaces/${workspaceId}/${action}`, {
-
-        method: "POST",
-
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || `Could not ${action} workspace.`);
-
-      await loadWorkspaces();
-
-    } catch (error) {
-
-      setWorkspaceError(error.message);
-
-    } finally {
-
-      setWorkspaceActionLoading(false);
-
-    }
-
-  }
-
-  async function sendMessage(e) {
-
-    e.preventDefault();
-
-    const text = message.trim();
-
-    if (!text || chatLoading) return;
-
-    if (!accessToken || !workspaceId) {
-
-      setMessages((prev) => [...prev, {
-
-        role: "assistant",
-
-        content: "Please create or select a workspace before chatting.",
-
-      }]);
-
-      return;
-
-    }
-
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-
-    setMessage("");
-
-    setChatLoading(true);
-
-    try {
-
-      const response = await apiFetch("/api/chat", {
-
-        method: "POST",
-
-        body: JSON.stringify({ message: text, workspace_id: Number(workspaceId) }),
-
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || "AI request failed.");
-
-      setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
-
-    } catch (error) {
-
-      setMessages((prev) => [...prev, {
-
-        role: "assistant",
-
-        content: `Error: ${error.message}`,
-
-      }]);
-
-    } finally {
-
-      setChatLoading(false);
-
-    }
-
-  }
-
-  // xterm.js is created only after authentication and is disposed on logout.
-
+      content:
+        "Hello! I'm Adrian AI Assistant, powered by Google Gemini. How can I help you today?",
+    },
+  ]);
+  const [containers, setContainers] = useState([]);
+  const [dockerLoading, setDockerLoading] = useState(false);
+  const [dockerError, setDockerError] = useState("");
+  const [dockerOnline, setDockerOnline] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [loggedInUser, setLoggedInUser] = useState(null);
+  const [loginError, setLoginError] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("1");
+  const [terminalCommand, setTerminalCommand] = useState("");
+  const [terminalOutput, setTerminalOutput] = useState("Log in, then enter a Linux command.");
+  const [terminalLoading, setTerminalLoading] = useState(false);
+  const [terminalError, setTerminalError] = useState("");
+  const terminalInputRef = useRef(null);
+  const terminalOutputRef = useRef(null);
+  const terminalSocketRef = useRef(null);
+  const xtermHostRef = useRef(null);
+  const xtermRef = useRef(null);
+  const [terminalConnection, setTerminalConnection] = useState("Disconnected");
   useEffect(() => {
-
-    if (!accessToken || !xtermHostRef.current || xtermRef.current) return undefined;
-
+    fetch(`${API_URL}/health`)
+      .then((response) => {
+        if (!response.ok) throw new Error("Backend unavailable");
+        return response.json();
+      })
+      .then(() => setBackend("Online"))
+      .catch(() => setBackend("Offline"));
+  }, []);
+  async function loadContainers() {
+    setDockerLoading(true);
+    setDockerError("");
+    try {
+      const response = await fetch(`${API_URL}/api/docker/containers`);
+      if (!response.ok) {
+        throw new Error(`Docker request failed (${response.status})`);
+      }
+      const data = await response.json();
+      setContainers(data.containers || []);
+      setDockerOnline(true);
+    } catch (error) {
+      setDockerOnline(false);
+      setDockerError(error.message || "Could not load Docker containers");
+    } finally {
+      setDockerLoading(false);
+    }
+  }
+  useEffect(() => {
+    loadContainers();
+  }, []);
+  async function sendMessage(e) {
+    e.preventDefault();
+    const userMessage = message.trim();
+    if (!userMessage || loading) return;
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setMessage("");
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "AI request failed");
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.response },
+      ]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Error: ${error.message}` },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function loginToTerminal(e) {
+    e.preventDefault();
+    setLoginError("");
+    try {
+      const response = await fetch(`${API_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Login failed");
+      setAccessToken(data.access_token);
+      setLoggedInUser(data.user || { email: loginEmail });
+      setLoginPassword("");
+      setTerminalOutput("");
+    } catch (error) {
+      setLoginError(error.message || "Could not log in.");
+    }
+  }
+  function runTerminalCommand(e) {
+    e.preventDefault();
+    const command = terminalCommand;
+    if (!command.trim() || terminalLoading) return;
+    const socket = terminalSocketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setTerminalError("Terminal is not connected. Wait for the connection or sign in again.");
+      return;
+    }
+    // A PTY echoes the typed command and returns its output in the same stream.
+    // Send only the command plus Enter; do not add a second copy to the transcript.
+    socket.send(command + "\n");
+    setTerminalCommand("");
+    setTerminalError("");
+    terminalInputRef.current?.focus();
+  }
+  useEffect(() => {
+    // The terminal host is rendered only after login. Initialize xterm
+    // when accessToken becomes available, not only on the first app render.
+    if (!accessToken || !xtermHostRef.current || xtermRef.current) return;
     const terminal = new XTerm({
-
       cursorBlink: true,
-
       convertEol: true,
-
       fontFamily: "Consolas, 'Courier New', monospace",
-
       fontSize: 13,
-
       lineHeight: 1.45,
-
-      scrollback: 3000,
-
       theme: {
-
-        background: "#171923",
-
-        foreground: "#e8e8ee",
-
-        cursor: "#7ee787",
-
-        cursorAccent: "#171923",
-
+        background: "#171923", foreground: "#e8e8ee",
+        cursor: "#7ee787", cursorAccent: "#171923",
         selectionBackground: "#514866",
-
+        black: "#171923", green: "#7ee787", brightGreen: "#7ee787",
       },
-
+      scrollback: 3000,
     });
-
     const fitAddon = new FitAddon();
-
     terminal.loadAddon(fitAddon);
-
     terminal.open(xtermHostRef.current);
-
-    terminal.writeln("Adrian AI workspace terminal");
-
-    terminal.writeln("Select a running workspace to connect.");
-
+    fitAddon.fit();
     xtermRef.current = terminal;
-
-    fitAddonRef.current = fitAddon;
-
+    // xterm.js captures keyboard input only while its hidden textarea is focused.
     requestAnimationFrame(() => {
-
-      try { fitAddon.fit(); } catch { /* terminal may not be visible yet */ }
-
+      terminal.focus();
+      fitAddon.fit();
     });
-
+    const resizeSubscription = terminal.onResize(({ cols, rows }) => {
+  const socket = terminalSocketRef.current;
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(`\x00RESIZE:${cols}:${rows}`);
+  }
+});
+    const inputSubscription = terminal.onData((data) => {
+      const socket = terminalSocketRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN) socket.send(data);
+    });
     const resizeObserver = new ResizeObserver(() => {
-
-      try { fitAddon.fit(); } catch { /* ignore transient layout changes */ }
-
+      try {
+        fitAddon.fit();
+      } catch (error) {
+        console.error("Terminal resize failed:", error);
+      }
     });
-
     resizeObserver.observe(xtermHostRef.current);
 
-    const inputSubscription = terminal.onData((data) => {
-
-      const socket = terminalSocketRef.current;
-
-      if (socket?.readyState === WebSocket.OPEN) socket.send(data);
-
-    });
-
-    const resizeSubscription = terminal.onResize(({ cols, rows }) => {
-
-      const socket = terminalSocketRef.current;
-
-      if (socket?.readyState === WebSocket.OPEN) socket.send(`\x00RESIZE:${cols}:${rows}`);
-
-    });
-
     return () => {
-
       inputSubscription.dispose();
-
       resizeSubscription.dispose();
-
       resizeObserver.disconnect();
-
       terminal.dispose();
-
       xtermRef.current = null;
-
-      fitAddonRef.current = null;
-
     };
-
-  }, [accessToken, workspaceId, workspaceRunning]);
-
-  // A WebSocket is opened only for the selected workspace and authenticated token.
-
+  }, [accessToken]);
   useEffect(() => {
-
-    if (!accessToken || !workspaceId || !workspaceRunning) {
-
-      terminalSocketRef.current?.close(1000, "Workspace unavailable");
-
-      terminalSocketRef.current = null;
-
+    if (!accessToken || !workspaceId) {
       setTerminalConnection("Disconnected");
-
-      return undefined;
-
+      return;
     }
-
+    let socket;
     let cancelled = false;
-
-    setTerminalError("");
-
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-
-    const socket = new WebSocket(
-
-      `${wsProtocol}//${window.location.host}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal/ws`
-
-    );
-
-    terminalSocketRef.current = socket;
-
-    setTerminalConnection("Connecting");
-
-    socket.onopen = () => {
-
-      if (cancelled) return;
-
-      socket.send(JSON.stringify({ token: accessToken }));
-
-      setTerminalConnection("Connected");
-
-      xtermRef.current?.focus();
-
-      const fitAddon = fitAddonRef.current;
-
-      try { fitAddon?.fit(); } catch { /* ignore */ }
-
-    };
-
-    socket.onmessage = (event) => {
-
-      if (!cancelled) xtermRef.current?.write(event.data);
-
-    };
-
-    socket.onerror = () => {
-
-      if (!cancelled) {
-
-        setTerminalConnection("Error");
-
-        setTerminalError("Terminal connection failed.");
-
-      }
-
-    };
-
-    socket.onclose = (event) => {
-
-      if (cancelled) return;
-
-      setTerminalConnection("Disconnected");
-
-      if (event.code === 4401) setTerminalError("Session expired. Please sign in again.");
-
-      else if (event.code === 4403) setTerminalError("You do not own this workspace.");
-
-      else if (event.code === 4409) setTerminalError("Workspace container is not running.");
-
-      else if (event.code !== 1000) setTerminalError("Terminal connection closed.");
-
-    };
-
+    try {
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsHost = API_URL.replace(/^https?:\/\//, "");
+      socket = new WebSocket(
+        `${wsProtocol}//${wsHost}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal/ws`
+      );
+      terminalSocketRef.current = socket;
+      setTerminalConnection("Connecting");
+      xtermRef.current?.reset();
+      setTerminalError("");
+      socket.onopen = () => {
+        if (cancelled) return;
+        socket.send(JSON.stringify({ token: accessToken }));
+        setTerminalConnection("Connected");
+        xtermRef.current?.focus();
+      };
+      socket.onmessage = (event) => {
+        if (cancelled) return;
+        xtermRef.current?.write(event.data);
+      };
+      socket.onerror = () => {
+        if (!cancelled) {
+          setTerminalConnection("Error");
+          setTerminalError("WebSocket connection failed.");
+        }
+      };
+      socket.onclose = (event) => {
+        if (cancelled) return;
+        setTerminalConnection("Disconnected");
+        if (event.code === 4401) {
+          setTerminalError("Session expired. Please log in again.");
+          setAccessToken("");
+          setLoggedInUser(null);
+        } else if (event.code === 4403) {
+          setTerminalError("You do not have access to this workspace.");
+        } else if (event.code === 4409) {
+          setTerminalError("Your Ubuntu workspace is not running. Start it first.");
+        } else if (event.code !== 1000) {
+          setTerminalError("Terminal connection closed.");
+        }
+      };
+    } catch (error) {
+      setTerminalConnection("Error");
+      setTerminalError(error.message || "Could not open terminal connection.");
+    }
     return () => {
-
       cancelled = true;
-
-      if (socket.readyState < WebSocket.CLOSING) socket.close(1000, "Workspace changed");
-
-      if (terminalSocketRef.current === socket) terminalSocketRef.current = null;
-
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        socket.close(1000, "Workspace changed or component unmounted");
+      }
+      if (terminalSocketRef.current === socket) {
+        terminalSocketRef.current = null;
+      }
     };
-
-  }, [accessToken, workspaceId, workspaceRunning]);
-
-  const runningCount = workspaces.filter((w) => w.status === "running").length;
+  }, [accessToken, workspaceId]);
+  useEffect(() => {
+    if (accessToken && terminalConnection === "Connected") {
+      terminalInputRef.current?.focus();
+    }
+  }, [accessToken, terminalConnection]);
+  const runningCount = containers.filter(
+    (container) => container.status === "running"
+  ).length;
+  function formatPorts(ports) {
+    if (!ports || Object.keys(ports).length === 0) return "No published ports";
+    return Object.entries(ports)
+      .map(([containerPort, bindings]) => {
+        if (!bindings || bindings.length === 0) return containerPort;
+        return bindings
+          .map((binding) => `${binding.HostIp}:${binding.HostPort} → ${containerPort}`)
+          .join(", ");
+      })
+      .join(" · ");
+  }
 
   if (!accessToken) {
-
     return (
-
       <main className="adrian-login-page">
-
-        <style>{`
-
-          .adrian-login-page{position:relative;isolation:isolate;min-height:100vh;display:grid;place-items:center;overflow:hidden;padding:32px 20px;background:#b8eee8;color:#302642}
-          .adrian-login-card{position:relative;z-index:2;width:min(100%,460px);box-sizing:border-box;padding:38px;background:#fff4d9;border:2px solid #40334d;box-shadow:8px 8px 0 #40334d}
-          .adrian-login-brand{display:flex;flex-direction:column;align-items:center;gap:11px;text-align:center}
-          .adrian-login-icon{width:58px;height:58px;display:grid;place-items:center;background:#f2a8c9;border:2px solid #40334d;box-shadow:4px 4px 0 #40334d}
-          .adrian-login-brand h1{margin:0;color:#08060d;font-size:29px;letter-spacing:1.2px;line-height:1.1}
-          .adrian-login-brand h1 span{color:#08060d}
-          .adrian-login-brand p{margin:5px 0 0;color:#302642;font-size:10px;letter-spacing:1.6px;font-weight:900}
-          .adrian-login-kicker{font-size:10px;letter-spacing:1.4px;font-weight:800}
-          .adrian-login-intro{margin:32px 0 24px;text-align:center}
-          .adrian-login-intro h2{font-size:32px;margin:12px 0 8px;color:#08060d}
-          .adrian-login-intro p{font-size:14px;line-height:1.6;color:#665b72}
-          .adrian-login-form{display:grid;gap:11px}
-          .adrian-login-form label{margin-top:8px;font-size:10px;font-weight:800;letter-spacing:1px}
-          .adrian-login-form input{box-sizing:border-box;width:100%;padding:14px;background:#fffdf6;border:1.5px solid #8d7895;color:#302642;font:inherit}
-          .adrian-login-form button{margin-top:14px;min-height:48px;display:flex;justify-content:center;align-items:center;gap:9px;border:2px solid #40334d;background:#f2a8c9;color:#302642;font-weight:800;cursor:pointer}
-          .adrian-login-form button:disabled{opacity:.65;cursor:wait}
-          .adrian-login-error{color:#b42342;font-size:13px}
-          .adrian-login-footer{display:flex;justify-content:space-between;gap:10px;margin-top:26px;padding-top:15px;border-top:1px dashed #b79aae;color:#796b80;font-size:9px;font-weight:700;letter-spacing:.7px}
-          .adrian-auth-switch{border:0;background:transparent;color:#8e3763;text-decoration:underline;cursor:pointer;padding:12px}
-          .adrian-sticker-layer{position:absolute;inset:0;z-index:1;pointer-events:none}
-          .adrian-sticker{position:absolute;z-index:1;display:flex;align-items:center;gap:7px;min-width:112px;padding:9px 11px;border:2px solid #40334d;border-radius:3px;background:#fff4d9;color:#302642;box-shadow:4px 4px 0 #40334d;font:900 10px/1.1 system-ui,sans-serif;letter-spacing:.7px;animation:adrian-float 5.2s ease-in-out infinite;user-select:none;pointer-events:none}
-          .adrian-sticker-icon{display:grid;place-items:center;width:25px;height:25px;flex:0 0 25px;border:1px solid #40334d;background:#f2a8c9;font-size:14px}
-          .adrian-sticker small{display:block;margin-top:3px;font-size:7px;letter-spacing:.6px;opacity:.72}
-          .sticker-terraform{top:12%;left:3%;transform:rotate(-8deg);background:#e7defb;animation-delay:-.7s}
-          .sticker-docker{top:17%;right:3%;transform:rotate(7deg);background:#d9f3f0;animation-delay:-2.1s}
-          .sticker-kubernetes{top:39%;left:2%;transform:rotate(6deg);background:#e7defb;animation-delay:-1.4s}
-          .sticker-linux{top:44%;right:2%;transform:rotate(-7deg);background:#fff0d0;animation-delay:-3s}
-          .sticker-aws{bottom:23%;left:3%;transform:rotate(-6deg);background:#fff0d0;animation-delay:-2.5s}
-          .sticker-github{bottom:18%;right:3%;transform:rotate(7deg);background:#f9dce9;animation-delay:-1s}
-          .sticker-ansible{bottom:5%;left:16%;transform:rotate(5deg);background:#f9dce9;animation-delay:-3.5s}
-          .sticker-cicd{bottom:5%;right:16%;transform:rotate(-5deg);background:#d9f3f0;animation-delay:-.4s}
-          .sticker-grafana{top:5%;left:39%;transform:rotate(-4deg);background:#fff0d0;animation-delay:-2.8s}
-          .sticker-prometheus{top:5%;right:35%;transform:rotate(5deg);background:#f9dce9;animation-delay:-1.8s}
-          @keyframes adrian-float{0%,100%{translate:0 0}50%{translate:0 -11px}}
-          @media(max-width:900px){.adrian-sticker{min-width:0;padding:7px;font-size:8px}.adrian-sticker small{display:none}.sticker-grafana{left:3%;top:4%}.sticker-prometheus{right:3%;top:4%}.sticker-ansible{left:3%;bottom:3%}.sticker-cicd{right:3%;bottom:3%}}
-          @media(max-width:620px){.adrian-sticker{display:none}.adrian-login-page{padding:18px 12px;overflow:auto}.adrian-login-card{padding:28px 22px}.adrian-login-footer{flex-direction:column}.adrian-login-intro{margin:27px 0 20px}}
-          @media(prefers-reduced-motion:reduce){.adrian-sticker{animation:none}}
-        `}</style>
-
-        <div className="adrian-sticker-layer" aria-hidden="true">
-          <div className="adrian-sticker sticker-grafana"><span className="adrian-sticker-icon">◉</span><span>GRAFANA<small>OBSERVABILITY</small></span></div>
-          <div className="adrian-sticker sticker-prometheus"><span className="adrian-sticker-icon">🔥</span><span>PROMETHEUS<small>METRICS</small></span></div>
-          <div className="adrian-sticker sticker-terraform"><span className="adrian-sticker-icon">⌘</span><span>TERRAFORM<small>INFRASTRUCTURE</small></span></div>
-          <div className="adrian-sticker sticker-docker"><span className="adrian-sticker-icon">🐳</span><span>DOCKER<small>CONTAINERS</small></span></div>
-          <div className="adrian-sticker sticker-kubernetes"><span className="adrian-sticker-icon">☸</span><span>KUBERNETES<small>ORCHESTRATION</small></span></div>
-          <div className="adrian-sticker sticker-linux"><span className="adrian-sticker-icon">🐧</span><span>LINUX<small>COMMAND LINE</small></span></div>
-          <div className="adrian-sticker sticker-aws"><span className="adrian-sticker-icon">☁</span><span>AWS<small>CLOUD</small></span></div>
-          <div className="adrian-sticker sticker-github"><span className="adrian-sticker-icon">⌂</span><span>GITHUB<small>SOURCE CONTROL</small></span></div>
-          <div className="adrian-sticker sticker-ansible"><span className="adrian-sticker-icon">✣</span><span>ANSIBLE<small>AUTOMATION</small></span></div>
-          <div className="adrian-sticker sticker-cicd"><span className="adrian-sticker-icon">⇄</span><span>CI / CD<small>PIPELINES</small></span></div>
-
+        <div className="adrian-logo-field" aria-hidden="true">
+          {/* Left outer column */}
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/docker/2496ED" alt="" style={{"--x":"2.5%","--y":"7%","--w":"clamp(68px,8vw,118px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/grafana/F46800" alt="" style={{"--x":"2.5%","--y":"31%","--w":"clamp(68px,8vw,118px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/amazonaws/232F3E" alt="" style={{"--x":"2.5%","--y":"56%","--w":"clamp(72px,8.5vw,124px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/awslambda/FF9900" alt="" style={{"--x":"2.5%","--y":"70%","--w":"clamp(58px,6.5vw,92px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/nginx/009639" alt="" style={{"--x":"2.5%","--y":"81%","--w":"clamp(68px,8vw,118px)"}} />
+          {/* Left inner column */}
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/jenkins/D24939" alt="" style={{"--x":"16%","--y":"7%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/terraform/7B42BC" alt="" style={{"--x":"16%","--y":"31%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/gitlab/FC6D26" alt="" style={{"--x":"16%","--y":"56%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/prometheus/E6522C" alt="" style={{"--x":"16%","--y":"81%","--w":"clamp(62px,7vw,104px)"}} />
+          {/* Right inner column */}
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/ansible/EE0000" alt="" style={{"--x":"76%","--y":"7%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/helm/0F1689" alt="" style={{"--x":"76%","--y":"31%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/githubactions/2088FF" alt="" style={{"--x":"76%","--y":"56%","--w":"clamp(62px,7vw,104px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/hashicorp/000000" alt="" style={{"--x":"76%","--y":"81%","--w":"clamp(62px,7vw,104px)"}} />
+          {/* Right outer column */}
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/kubernetes/326CE5" alt="" style={{"--x":"89%","--y":"7%","--w":"clamp(68px,8vw,118px)"}} />
+          <img className="adrian-logo" src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" alt="" style={{"--x":"89%","--y":"31%","--w":"clamp(68px,8vw,118px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/github/181717" alt="" style={{"--x":"89%","--y":"56%","--w":"clamp(68px,8vw,118px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/argocd/EF7B4D" alt="" style={{"--x":"89%","--y":"81%","--w":"clamp(68px,8vw,118px)"}} />
+          <img className="adrian-logo" src="https://cdn.simpleicons.org/microsoftazure/0078D4" alt="" style={{"--x":"89%","--y":"70%","--w":"clamp(58px,6.5vw,92px)"}} />
         </div>
-
+        <style>{`
+          .adrian-login-page{position:relative;isolation:isolate;min-height:100vh;width:100%;display:grid;place-items:center;overflow:hidden;padding:28px 20px;background:radial-gradient(ellipse at center,rgba(255,255,255,.48) 0%,rgba(184,238,232,0) 58%),#b8eee8;color:#302642}
+          .adrian-logo-field{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+          .adrian-logo{position:absolute;left:var(--x);top:var(--y);width:var(--w);height:auto;object-fit:contain;image-rendering:auto;filter:drop-shadow(3px 6px 5px rgba(30,45,60,.22));opacity:.96;will-change:transform;animation:adrian-logo-float 5.2s ease-in-out infinite}
+          .adrian-logo:nth-child(even){animation-delay:-2.1s;animation-duration:6.1s}
+          .adrian-logo:nth-child(3n){animation-delay:-3.4s;animation-duration:5.7s}
+          @keyframes adrian-logo-float{0%,100%{transform:translate3d(0,0,0) rotate(-3deg) scale(1)}25%{transform:translate3d(5px,-13px,0) rotate(1deg) scale(1.025)}50%{transform:translate3d(0,-24px,0) rotate(4deg) scale(1.04)}75%{transform:translate3d(-5px,-12px,0) rotate(1deg) scale(1.02)}}
+          .adrian-login-card{position:relative;z-index:1;width:min(100%,460px);box-sizing:border-box;padding:34px 38px;background:#fff4d9;border:2px solid #40334d;border-radius:0;box-shadow:8px 8px 0 #40334d;text-align:center}
+          .adrian-login-brand{display:flex;align-items:center;justify-content:center;gap:14px;text-align:left}
+          .adrian-login-icon{width:58px;height:58px;flex:0 0 58px;display:grid;place-items:center;background:rgba(255,255,255,.5);border:2px solid #40334d;border-radius:20px}
+          .adrian-login-brand h1{margin:0;font-size:25px;letter-spacing:1px;color:#302642}
+          .adrian-login-brand h1 span{color:#c65b8a}
+          .adrian-login-brand p{margin:5px 0 0;font-size:10px;letter-spacing:1.2px;font-weight:800;color:#302642}
+          .adrian-login-intro{margin:24px 0 22px}
+          .adrian-login-kicker{font-size:10px;letter-spacing:1.4px;font-weight:800;color:#356b70}
+          .adrian-login-intro h2{font-size:30px;margin:10px 0 8px;color:#302642}
+          .adrian-login-intro p{font-size:13px;line-height:1.6;color:#315b60;margin:0}
+          .adrian-login-form{display:grid;gap:10px;text-align:left}
+          .adrian-login-form label{margin-top:7px;font-size:10px;font-weight:800;letter-spacing:1px;color:#51445e}
+          .adrian-login-form input{box-sizing:border-box;width:100%;min-height:48px;padding:12px 14px;background:#fffdf6;border:1.5px solid #8d7895;border-radius:14px;color:#302642;font:inherit}
+          .adrian-login-form input:focus{outline:2px solid #dc78a8;outline-offset:1px}
+          .adrian-login-form button{margin-top:12px;min-height:48px;display:flex;justify-content:center;align-items:center;gap:9px;border:2px solid #40334d;border-radius:15px;background:#f2a8c9;color:#302642;font-weight:900;cursor:pointer}
+          .adrian-login-form button:disabled{opacity:.65;cursor:wait}
+          .adrian-login-error{color:#b42342;font-size:13px;margin:0}
+          .adrian-login-footer{display:flex;justify-content:space-between;gap:10px;margin-top:18px;padding-top:0;border-top:0;color:#356b70;font-size:9px;font-weight:700;letter-spacing:.5px}
+          @media(max-width:1100px){.adrian-logo{opacity:.55;--w:clamp(48px,6vw,76px)!important}.adrian-logo-field{inset:0 0 0 0}}
+          @media(max-width:760px){.adrian-logo{opacity:.18;--w:clamp(34px,7vw,54px)!important}.adrian-logo:nth-child(n+9){display:none}.adrian-login-card{width:min(100%,430px);padding:28px 26px}}
+          @media(max-width:520px){.adrian-login-page{padding:18px 12px}.adrian-login-card{padding:24px 20px}.adrian-login-intro{margin:24px 0 18px}.adrian-logo{opacity:.12}.adrian-logo:nth-child(n+5){display:none}}
+          @media(prefers-reduced-motion:reduce){.adrian-logo{animation:none}}
+        `}</style>
         <section className="adrian-login-card">
-
           <div className="adrian-login-brand">
             <div className="adrian-login-icon"><Bot size={32} /></div>
             <div><h1>ADRIAN <span>AI</span></h1><p>DEVOPS ASSISTANT CONSOLE</p></div>
           </div>
           <div className="adrian-login-intro">
-
             <span className="adrian-login-kicker">YOUR DEVOPS COMMAND CENTER</span>
-
-            <h2>{authMode === "login" ? "Welcome back." : "Create account."}</h2>
-
-            <p>Sign in or register to access your own dashboard, AI assistant and isolated Ubuntu workspace.</p>
-
+            <h2>Welcome back.</h2>
+            <p>Sign in to access your dashboard, Adrian AI, Docker tools, and personal Ubuntu workspace.</p>
           </div>
-
-          <form className="adrian-login-form" onSubmit={authenticate}>
-
-            {authMode === "register" && <>
-
-              <label htmlFor="adrian-username">USERNAME</label>
-
-              <input id="adrian-username" value={registerUsername} onChange={(e) => setRegisterUsername(e.target.value)} minLength={3} maxLength={100} autoComplete="username" required placeholder="Choose a username" />
-
-            </>}
-
-            <label htmlFor="adrian-email">EMAIL ADDRESS</label>
-
-            <input id="adrian-email" type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} autoComplete="email" required placeholder="you@example.com" />
-
-            <label htmlFor="adrian-password">PASSWORD</label>
-
-            <input id="adrian-password" type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} minLength={authMode === "register" ? 8 : undefined} autoComplete={authMode === "login" ? "current-password" : "new-password"} required placeholder="Enter your password" />
-
-            {authError && <p className="adrian-login-error">{authError}</p>}
-
-            <button type="submit" disabled={authLoading}>
-
-              {authLoading ? <LoaderCircle size={17} className="spin" /> : <ShieldCheck size={17} />}
-
-              {authLoading ? "PLEASE WAIT..." : authMode === "login" ? "SIGN IN TO ADRIAN AI" : "CREATE ACCOUNT"}
-
+          <form className="adrian-login-form" onSubmit={loginToTerminal}>
+            <label htmlFor="adrian-login-email">EMAIL ADDRESS</label>
+            <input id="adrian-login-email" type="email" value={loginEmail}
+              onChange={(e)=>setLoginEmail(e.target.value)} placeholder="you@example.com"
+              autoComplete="username" required />
+            <label htmlFor="adrian-login-password">PASSWORD</label>
+            <input id="adrian-login-password" type="password" value={loginPassword}
+              onChange={(e)=>setLoginPassword(e.target.value)} placeholder="Enter your password"
+              autoComplete="current-password" required />
+            {loginError && <p className="adrian-login-error">{loginError}</p>}
+            <button type="submit" disabled={loading}>
+              {loading ? <LoaderCircle size={17} className="spin"/> : <ShieldCheck size={17}/>}
+              LOGIN
             </button>
-
           </form>
-
-          <button className="adrian-auth-switch" type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}>
-
-            {authMode === "login" ? "New here? Create an account" : "Already registered? Sign in"}
-
-          </button>
-
-          <div className="adrian-login-footer"><span>API: {backend}</span><span>PRIVATE WORKSPACE ACCESS</span></div>
-
+          <div className="adrian-login-footer">
+            <span>API: {backend}</span><span>SECURE WORKSPACE ACCESS</span>
+          </div>
         </section>
-
       </main>
-
     );
-
   }
-
   return (
-
     <div className="app-shell">
-
       <aside className="sidebar">
-
         <div className="brand">
-
           <div className="brand-icon"><Bot size={25} /></div>
-
-          <div><h1>ADRIAN<span> AI</span></h1><p>ASSISTANT CONSOLE</p></div>
-
+          <div>
+            <h1>ADRIAN<span> AI</span></h1>
+            <p>ASSISTANT CONSOLE</p>
+          </div>
         </div>
-
         <div className="sidebar-label">WORKSPACE</div>
-
         <nav className="nav-menu">
-
-          <a className="nav-item active" href="#dashboard"><LayoutDashboard size={18} /> Dashboard</a>
-
-          <a className="nav-item" href="#assistant"><MessageSquare size={18} /> AI Assistant</a>
-
-          <a className="nav-item" href="#containers"><Container size={18} /> My Workspaces</a>
-
-          <a className="nav-item" href="#terminal"><Terminal size={18} /> Terminal</a>
-
-          <a className="nav-item" href="#settings"><Settings size={18} /> Settings</a>
-
+          <a className="nav-item active" href="#dashboard">
+            <LayoutDashboard size={18} /> Dashboard
+          </a>
+          <a className="nav-item" href="#assistant">
+            <MessageSquare size={18} /> AI Assistant
+          </a>
+          <a className="nav-item" href="#containers">
+            <Container size={18} /> Containers
+          </a>
+          <a className="nav-item" href="#activity">
+            <Activity size={18} /> Activity
+          </a>
         </nav>
-
+        <div className="sidebar-label tools-label">TOOLS</div>
+        <nav className="nav-menu">
+          <a className="nav-item" href="#terminal">
+            <Terminal size={18} /> Terminal
+          </a>
+          <a className="nav-item" href="#workspace">
+            <FolderOpen size={18} /> Workspace
+          </a>
+          <a className="nav-item" href="#settings">
+            <Settings size={18} /> Settings
+          </a>
+        </nav>
         <div className="sidebar-bottom">
-
           <div className="sidebar-status">
-
             <span className={`status-dot ${backend === "Online" ? "online" : ""}`} />
-
-            <div><strong>API CONNECTION</strong><small>{backend}</small></div>
-
+            <div>
+              <strong>API CONNECTION</strong>
+              <small>{backend}</small>
+            </div>
           </div>
-
           <p className="sidebar-version">ADRIAN AI · VERSION 1.0.0</p>
-
         </div>
-
       </aside>
-
       <main className="main-content" id="dashboard">
-
         <header className="topbar">
-
-          <div><p className="eyebrow">YOUR COMMAND CENTER</p><h2>Dashboard</h2></div>
-
+          <div>
+            <p className="eyebrow">YOUR COMMAND CENTER</p>
+            <h2>Dashboard <span className="heading-star">✳</span></h2>
+          </div>
           <div className="topbar-right">
-
-            <span className="date-label">{loggedInUser?.email || loggedInUser?.username}</span>
-
-            <button type="button" className="refresh-button" onClick={logout}><LogOut size={15} /> Log out</button>
-
+            <span className="date-label">{new Date().toLocaleDateString()}</span>
+            <button type="button" className="refresh-button" onClick={() => {
+              terminalSocketRef.current?.close(1000, "User logged out");
+              terminalSocketRef.current = null;
+              setAccessToken("");
+              setLoggedInUser(null);
+              setLoginEmail("");
+              setLoginPassword("");
+              setTerminalError("");
+              setTerminalOutput("Please sign in to continue.");
+            }}>Log out</button>
+            <div className="avatar"><Bot size={19} /></div>
           </div>
-
         </header>
-
         <section className="welcome-banner">
-
-          <div><p className="banner-kicker">PRIVATE USER SESSION</p><h3>Welcome to your DevOps workspace!</h3><p>Your dashboard displays only workspaces belonging to your account.</p></div>
-
+          <div>
+            <p className="banner-kicker">SYSTEM READY_</p>
+            <h3>Welcome to your DevOps workspace!</h3>
+            <p>Monitor your containers, ask your AI assistant, and keep your infrastructure in check.</p>
+          </div>
           <div className="banner-art"><Server size={62} strokeWidth={1.3} /></div>
-
         </section>
-
-        <section className="stats-grid" aria-label="Account overview">
-
-          <article className="stat-card"><div className="stat-icon pink"><Server size={20} /></div><div className="stat-copy"><span>BACKEND API</span><strong>{backend}</strong><small>Service status</small></div></article>
-
-          <article className="stat-card"><div className="stat-icon teal"><FolderOpen size={20} /></div><div className="stat-copy"><span>MY WORKSPACES</span><strong>{workspaces.length}</strong><small>Owned by your account</small></div></article>
-
-          <article className="stat-card"><div className="stat-icon purple"><Activity size={20} /></div><div className="stat-copy"><span>RUNNING WORKSPACES</span><strong>{runningCount}</strong><small>Your active workspaces</small></div></article>
-
-          <article className="stat-card"><div className="stat-icon yellow"><ShieldCheck size={20} /></div><div className="stat-copy"><span>AI ASSISTANT</span><strong>Gemini</strong><small>AI service configured</small></div></article>
-
+        <section className="stats-grid" aria-label="System overview">
+          <article className="stat-card">
+            <div className="stat-icon pink"><Server size={20} /></div>
+            <div className="stat-copy">
+              <span>BACKEND API</span>
+              <strong>{backend}</strong>
+              <small><span className={`mini-dot ${backend === "Online" ? "good" : "bad"}`} /> Service status</small>
+            </div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-icon teal"><Container size={20} /></div>
+            <div className="stat-copy">
+              <span>DOCKER ENGINE</span>
+              <strong>{dockerOnline ? "Connected" : dockerLoading ? "Checking..." : "Offline"}</strong>
+              <small><span className={`mini-dot ${dockerOnline ? "good" : "bad"}`} /> Engine connection</small>
+            </div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-icon purple"><Activity size={20} /></div>
+            <div className="stat-copy">
+              <span>RUNNING CONTAINERS</span>
+              <strong>{dockerOnline ? runningCount : "—"}</strong>
+              <small>Active Docker workloads</small>
+            </div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-icon yellow"><ShieldCheck size={20} /></div>
+            <div className="stat-copy">
+              <span>AI ASSISTANT</span>
+              <strong>Gemini</strong>
+              <small><span className="mini-dot good" /> AI service configured</small>
+            </div>
+          </article>
         </section>
-
         <section className="panel docker-panel" id="containers">
-
           <div className="panel-header">
-
-            <div className="panel-title"><div className="panel-icon"><FolderOpen size={19} /></div><div><h3>My Linux Workspaces</h3><p>Only workspaces owned by your account</p></div></div>
-
-            <button className="refresh-button" type="button" onClick={() => loadWorkspaces()} disabled={workspaceLoading}><RefreshCw size={15} className={workspaceLoading ? "spin" : ""} /> Refresh</button>
-
-          </div>
-
-          <form className="terminal-controls" onSubmit={createWorkspace}>
-
-            <label>NEW WORKSPACE NAME<input value={newWorkspaceName} onChange={(e) => setNewWorkspaceName(e.target.value)} maxLength={100} required /></label>
-
-            <button className="terminal-run-button" type="submit" disabled={workspaceActionLoading}><Plus size={15} /> Create workspace</button>
-
-          </form>
-
-          {workspaceError && <div className="docker-message docker-error"><CircleAlert size={18} /><p>{workspaceError}</p></div>}
-
-          {workspaceLoading ? <div className="docker-message"><LoaderCircle className="spin" /> Loading your workspaces...</div> :
-
-            workspaces.length === 0 ? <div className="docker-message empty-state"><FolderOpen size={22} /><div><strong>No workspaces yet</strong><p>Create your first Linux workspace above.</p></div></div> :
-
-            <div className="container-list">
-
-              {workspaces.map((workspace) => (
-
-                <article className="container-row" key={workspace.id} onClick={() => setWorkspaceId(String(workspace.id))} style={{ cursor: "pointer", outline: String(workspace.id) === String(workspaceId) ? "2px solid #8b75c9" : "none" }}>
-
-                  <div className="container-symbol"><Container size={19} /></div>
-
-                  <div className="container-main"><strong>{workspace.name}</strong><small>Workspace ID: {workspace.id}</small></div>
-
-                  <div className="container-meta"><span className={`container-status ${workspace.status === "running" ? "running" : "stopped"}`}><span /> {workspace.status}</span></div>
-
-                </article>
-
-              ))}
-
-            </div>
-
-          }
-
-          {selectedWorkspace && <div className="panel-footer">
-
-            <span>Selected: {selectedWorkspace.name}</span>
-
-            <span>{workspaceRunning ? "Workspace running" : "Workspace stopped"}</span>
-
-            <button className="refresh-button" type="button" disabled={workspaceActionLoading} onClick={() => changeWorkspaceState(workspaceRunning ? "stop" : "start")}>
-
-              {workspaceActionLoading ? <LoaderCircle size={14} className="spin" /> : workspaceRunning ? <Square size={14} /> : <Play size={14} />}
-
-              {workspaceRunning ? "Stop" : "Start"}
-
-            </button>
-
-          </div>}
-
-        </section>
-
-        <section className="panel terminal-panel" id="terminal">
-
-          <div className="panel-header">
-
-            <div className="panel-title"><div className="panel-icon terminal-icon"><Terminal size={19} /></div><div><h3>Ubuntu Terminal</h3><p>Your selected isolated workspace</p></div></div>
-
-            <span className="terminal-readonly">{terminalConnection}</span>
-
-          </div>
-
-          {!workspaceId ? <div className="docker-message">Create or select a workspace to use the terminal.</div> :
-
-            !workspaceRunning ? <div className="docker-message">Start the selected workspace to connect to its terminal.</div> :
-
-            <>
-
-              {terminalError && <p className="terminal-disclaimer has-error">{terminalError}</p>}
-
-              <div className="terminal-window" style={{ background: "#171923", border: "1px solid #454052", overflow: "hidden" }}>
-
-                <div className="terminal-window-bar"><span><i /><i /><i /></span><strong>ADRIAN AI / CLI</strong><span>{terminalConnection}</span></div>
-
-                <div ref={xtermHostRef} style={{ height: 340, padding: "12px 14px", background: "#171923", boxSizing: "border-box" }} />
-
+            <div className="panel-title">
+              <div className="panel-icon"><Container size={19} /></div>
+              <div>
+                <h3>Docker Containers</h3>
+                <p>Live overview from your Docker Engine</p>
               </div>
-
-            </>
-
-          }
-
+            </div>
+            <button
+              className="refresh-button"
+              type="button"
+              onClick={loadContainers}
+              disabled={dockerLoading}
+            >
+              <RefreshCw size={15} className={dockerLoading ? "spin" : ""} />
+              {dockerLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          {dockerError ? (
+            <div className="docker-message docker-error">
+              <CircleAlert size={18} />
+              <div>
+                <strong>Could not connect to Docker</strong>
+                <p>{dockerError}</p>
+              </div>
+            </div>
+          ) : dockerLoading && containers.length === 0 ? (
+            <div className="docker-message">
+              <LoaderCircle size={19} className="spin" />
+              <span>Loading containers...</span>
+            </div>
+          ) : containers.length === 0 ? (
+            <div className="docker-message empty-state">
+              <Container size={22} />
+              <div>
+                <strong>No containers found</strong>
+                <p>Start a Docker container and refresh this panel.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="container-list">
+              {containers.map((container) => (
+                <article className="container-row" key={container.id}>
+                  <div className="container-symbol"><Container size={19} /></div>
+                  <div className="container-main">
+                    <strong>{container.name}</strong>
+                    <small>{container.image}</small>
+                    <small className="container-ports">{formatPorts(container.ports)}</small>
+                  </div>
+                  <div className="container-meta">
+                    <span className={`container-status ${container.status === "running" ? "running" : "stopped"}`}>
+                      <span /> {container.status}
+                    </span>
+                    <small>ID: {container.id}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          <div className="panel-footer">
+            <span>{containers.length} container{containers.length === 1 ? "" : "s"} detected</span>
+            <span>{dockerOnline ? "Docker connection active" : "Waiting for Docker connection"}</span>
+          </div>
         </section>
-
-        <div className="content-grid">
-
-          <section className="panel chat-panel" id="assistant">
-
-            <div className="panel-header"><div className="panel-title"><div className="panel-icon chat-icon"><Bot size={19} /></div><div><h3>AI Assistant</h3><p>Powered by Google Gemini · Your session</p></div></div><span className="live-pill">LIVE</span></div>
-
-            <div className="chat-messages">
-
-              {messages.map((item, index) => <div className={`chat-message ${item.role}`} key={`${item.role}-${index}`}><div className="message-avatar">{item.role === "assistant" ? <Bot size={16} /> : <span>YOU</span>}</div><div className="message-bubble"><small>{item.role === "assistant" ? "ADRIAN AI" : "YOU"}</small><p>{item.content}</p></div></div>)}
-
-              {chatLoading && <div className="chat-message assistant"><div className="message-avatar"><Bot size={16} /></div><div className="message-bubble"><small>ADRIAN AI</small><p className="thinking"><LoaderCircle size={15} className="spin" /> Thinking...</p></div></div>}
-
+        <section className="panel terminal-panel" id="terminal">
+          <div className="panel-header">
+            <div className="panel-title">
+              <div className="panel-icon terminal-icon"><Terminal size={19} /></div>
+              <div>
+                <h3>Ubuntu Terminal</h3>
+                <p>Type Linux commands in your personal workspace</p>
+              </div>
             </div>
-
-            <form className="chat-form" onSubmit={sendMessage}>
-
-              <input type="text" value={message} onChange={(e) => setMessage(e.target.value)} placeholder={workspaceId ? "Ask about Docker, Linux, AWS, Kubernetes..." : "Select a workspace first..."} aria-label="Message Adrian AI" maxLength={4000} />
-
-              <button type="submit" disabled={chatLoading || !message.trim() || !workspaceId}><Send size={18} /></button>
-
+            {loggedInUser && (
+              <button
+                className="refresh-button"
+                type="button"
+                onClick={() => {
+                  setAccessToken("");
+                  setLoggedInUser(null);
+                  setTerminalOutput("Logged out. Sign in to use the terminal.");
+                  setTerminalError("");
+                }}
+              >
+                Log out
+              </button>
+            )}
+          </div>
+          {!accessToken ? (
+            <form className="terminal-controls" onSubmit={loginToTerminal}>
+              <label>
+                EMAIL
+                <input
+                  type="email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="Your account email"
+                  autoComplete="username"
+                  required
+                />
+              </label>
+              <label>
+                PASSWORD
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Your password"
+                  autoComplete="current-password"
+                  required
+                />
+              </label>
+              <button className="terminal-run-button" type="submit">Log in</button>
+              {loginError && <p className="terminal-disclaimer has-error">{loginError}</p>}
             </form>
-
-            <p className="chat-hint">ENTER TO SEND · AI-GENERATED ANSWERS MAY NEED VERIFICATION</p>
-
-          </section>
-
-          <section className="panel health-panel" id="settings">
-
-            <div className="panel-header"><div className="panel-title"><div className="panel-icon health-icon"><Activity size={19} /></div><div><h3>Account Health</h3><p>Service connection overview</p></div></div></div>
-
-            <div className="health-list">
-
-              <div className="health-item"><div className="health-item-icon"><Server size={17} /></div><div><strong>FastAPI Backend</strong><small>Same-origin API</small></div><span className={`health-state ${backend === "Online" ? "ok" : "fail"}`}>{backend === "Online" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}{backend}</span></div>
-
-              <div className="health-item"><div className="health-item-icon"><FolderOpen size={17} /></div><div><strong>Personal Workspaces</strong><small>Account-scoped API</small></div><span className="health-state ok"><CircleCheck size={16} /> Connected</span></div>
-
-              <div className="health-item"><div className="health-item-icon"><Cpu size={17} /></div><div><strong>Gemini AI</strong><small>AI response service</small></div><span className="health-state ok"><CircleCheck size={16} /> Configured</span></div>
-
+          ) : (
+            <>
+              <div className="terminal-controls">
+                <label>
+                  SIGNED IN
+                  <span>{loggedInUser?.email || loggedInUser?.username || "Authenticated user"}</span>
+                </label>
+                <label>
+                  WORKSPACE ID
+                  <input
+                    type="number"
+                    min="1"
+                    value={workspaceId}
+                    onChange={(e) => setWorkspaceId(e.target.value)}
+                  />
+                </label>
+              </div>
+              <style>{`
+                .adrian-xterm-host { width: 100%; min-width: 0; cursor: text; }
+                .adrian-xterm-host .xterm { height: 100%; width: 100%; }
+                .adrian-xterm-host .xterm-viewport { overflow-y: auto !important; }
+                .adrian-xterm-host .xterm-helper-textarea {
+                  opacity: 0 !important;
+                  position: absolute !important;
+                }
+                .terminal-window .terminal-output {
+                  text-align: left !important;
+                  justify-content: flex-start !important;
+                  align-items: flex-start !important;
+                  display: block !important;
+                  width: 100% !important;
+                  margin-left: 0 !important;
+                  margin-right: 0 !important;
+                }
+                .terminal-window form { text-align: left !important; }
+                .terminal-window form input { text-align: left !important; }
+              `}</style>
+              <div className="terminal-window" style={{ background: "#171923", border: "1px solid #454052", overflow: "hidden" }}>
+                <div className="terminal-window-bar">
+                  <span><i /> <i /> <i /></span>
+                  <strong>ADRIAN AI / CLI</strong>
+                  <span className="terminal-readonly">{terminalConnection}</span>
+                </div>
+                <div
+                  ref={xtermHostRef}
+                  className="adrian-xterm-host"
+                  onClick={() => xtermRef.current?.focus()}
+                  onMouseDown={() => xtermRef.current?.focus()}
+                  style={{
+                    height: 340,
+                    padding: "12px 14px",
+                    background: "#171923",
+                    boxSizing: "border-box",
+                    textAlign: "left",
+                  }}
+                />
+              </div>
+            </>
+          )}
+        </section>
+        <div className="content-grid">
+          <section className="panel chat-panel" id="assistant">
+            <div className="panel-header">
+              <div className="panel-title">
+                <div className="panel-icon chat-icon"><Bot size={19} /></div>
+                <div>
+                  <h3>AI Assistant</h3>
+                  <p>Powered by Google Gemini</p>
+                </div>
+              </div>
+              <span className="live-pill"><span /> LIVE</span>
             </div>
-
-            <div className="health-note"><ShieldCheck size={17} /><span>Workspace access is checked by the backend using your authenticated account.</span></div>
-
-            <a className="docs-link" href={`${API_URL}/docs`} target="_blank" rel="noreferrer">Open API documentation</a>
-
+            <div className="chat-messages">
+              {messages.map((item, index) => (
+                <div className={`chat-message ${item.role}`} key={`${item.role}-${index}`}>
+                  <div className="message-avatar">
+                    {item.role === "assistant" ? <Bot size={16} /> : <span>YOU</span>}
+                  </div>
+                  <div className="message-bubble">
+                    <small>{item.role === "assistant" ? "ADRIAN AI" : "YOU"}</small>
+                    <p>{item.content}</p>
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="chat-message assistant">
+                  <div className="message-avatar"><Bot size={16} /></div>
+                  <div className="message-bubble">
+                    <small>ADRIAN AI</small>
+                    <p className="thinking"><LoaderCircle size={15} className="spin" /> Thinking...</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <form className="chat-form" onSubmit={sendMessage}>
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Ask me about Docker, Linux, AWS, Kubernetes..."
+                aria-label="Message the Adrian AI Assistant"
+                maxLength={4000}
+              />
+              <button type="submit" disabled={loading || !message.trim()} aria-label="Send message">
+                {loading ? <LoaderCircle size={18} className="spin" /> : <Send size={18} />}
+              </button>
+            </form>
+            <p className="chat-hint">ENTER TO SEND · AI-GENERATED ANSWERS MAY NEED VERIFICATION</p>
           </section>
-
+          <section className="panel health-panel" id="activity">
+            <div className="panel-header">
+              <div className="panel-title">
+                <div className="panel-icon health-icon"><Activity size={19} /></div>
+                <div>
+                  <h3>System Health</h3>
+                  <p>Service connection overview</p>
+                </div>
+              </div>
+            </div>
+            <div className="health-list">
+              <div className="health-item">
+                <div className="health-item-icon"><Server size={17} /></div>
+                <div><strong>FastAPI Backend</strong><small>localhost:8000</small></div>
+                <span className={`health-state ${backend === "Online" ? "ok" : "fail"}`}>
+                  {backend === "Online" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}
+                  {backend}
+                </span>
+              </div>
+              <div className="health-item">
+                <div className="health-item-icon"><Container size={17} /></div>
+                <div><strong>Docker Engine</strong><small>Container runtime</small></div>
+                <span className={`health-state ${dockerOnline ? "ok" : "fail"}`}>
+                  {dockerOnline ? <CircleCheck size={16} /> : <CircleAlert size={16} />}
+                  {dockerOnline ? "Online" : "Offline"}
+                </span>
+              </div>
+              <div className="health-item">
+                <div className="health-item-icon"><Cpu size={17} /></div>
+                <div><strong>Gemini AI</strong><small>AI response service</small></div>
+                <span className="health-state ok"><CircleCheck size={16} /> Ready</span>
+              </div>
+              <div className="health-item">
+                <div className="health-item-icon"><HardDrive size={17} /></div>
+                <div><strong>Workspace</strong><small>Local project files</small></div>
+                <span className="health-state ok"><CircleCheck size={16} /> Ready</span>
+              </div>
+            </div>
+            <div className="health-note">
+              <ShieldCheck size={17} />
+              <span>Monitoring is read-only. No container actions are performed from this dashboard.</span>
+            </div>
+            <a className="docs-link" href="http://localhost:8000/docs" target="_blank" rel="noreferrer">
+              Open API documentation <ChevronRight size={15} />
+            </a>
+          </section>
         </div>
-
-        <footer className="page-footer"><span>BUILT FOR YOUR DEVOPS WORKFLOW</span><span>ADRIAN AI ASSISTANT · 2026</span></footer>
-
+        <footer className="page-footer">
+          <span>✳ BUILT FOR YOUR DEVOPS WORKFLOW</span>
+          <span>ADRIAN AI ASSISTANT · 2026</span>
+        </footer>
       </main>
-
     </div>
-
   );
-
 }
-
 export default App;
