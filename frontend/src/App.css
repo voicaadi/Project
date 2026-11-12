@@ -82,7 +82,7 @@ button { cursor: pointer; }
 
 .brand h1 {
   margin: 0;
-  color: var(--ink);
+  color: #000000;
   font-family: 'VT323', monospace;
   font-size: 34px;
   line-height: 1;
@@ -91,7 +91,7 @@ button { cursor: pointer; }
 
 .brand h1 span {
   margin-left: 3px;
-  color: var(--pink-dark);
+  color: #000000;
   font-size: 22px;
 }
 
