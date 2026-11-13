@@ -1,14 +1,17 @@
-cat >> .gitignore <<'EOF'
-
 .env
 .env.*
 !.env.example
+
 .venv/
 __pycache__/
 node_modules/
 dist/
+
 .terraform/
 *.tfstate
 *.tfstate.*
 *.tfplan
-EOF
+
+actions-runner/
+*.backup
+*.pre-api-fix

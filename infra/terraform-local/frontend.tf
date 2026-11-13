@@ -23,13 +23,17 @@ resource "kubernetes_deployment_v1" "frontend" {
         labels = {
           app = "devops-ai-frontend"
         }
+
+        annotations = {
+          "kubectl.kubernetes.io/restartedAt" = "2026-11-12T23:57:38+02:00"
+        }
       }
 
       spec {
         container {
           name              = "frontend"
-          image             = "devops-ai-frontend:local"
-          image_pull_policy = "IfNotPresent"
+          image             = "ghcr.io/voicaadi/devops-ai-frontend:latest"
+          image_pull_policy = "Always"
 
           port {
             container_port = 80

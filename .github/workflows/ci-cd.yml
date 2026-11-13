@@ -9,6 +9,9 @@ on:
 
 permissions:
   contents: read
+concurrency:
+  group: adri-ai-production
+  cancel-in-progress: false
 
 jobs:
   backend-tests:
@@ -124,3 +127,38 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/devops-ai-frontend:latest
             ghcr.io/${{ github.repository_owner }}/devops-ai-frontend:${{ github.sha }}
+
+  deploy:
+    name: Deploy to Local Kubernetes
+    runs-on: [self-hosted, Linux, X64, adri-wsl]
+    needs: [publish-images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Verify Kubernetes connection
+        run: kubectl cluster-info
+
+      - name: Deploy backend
+        run: |
+          kubectl set image deployment/devops-ai-backend \
+            backend=ghcr.io/${{ github.repository_owner }}/devops-ai-backend:${{ github.sha }} \
+            -n devops-ai
+
+      - name: Deploy frontend
+        run: |
+          kubectl set image deployment/devops-ai-frontend \
+            frontend=ghcr.io/${{ github.repository_owner }}/devops-ai-frontend:${{ github.sha }} \
+            -n devops-ai
+
+      - name: Wait for backend rollout
+        run: |
+          kubectl rollout status deployment/devops-ai-backend \
+            -n devops-ai --timeout=180s
+
+      - name: Wait for frontend rollout
+        run: |
+          kubectl rollout status deployment/devops-ai-frontend \
+            -n devops-ai --timeout=180s
+      - name: Verify public application
+        run: |
+          curl --fail --retry 5 --retry-delay 5 https://devopsadi.com/health

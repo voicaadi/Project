@@ -25,15 +25,15 @@ resource "kubernetes_deployment_v1" "backend" {
         }
 
         annotations = {
-          "kubectl.kubernetes.io/restartedAt" = "2026-11-10T21:41:19+02:00"
+          "kubectl.kubernetes.io/restartedAt" = "2026-11-11T18:36:20+02:00"
         }
       }
 
       spec {
         container {
           name              = "backend"
-          image             = "devops-ai-backend:local"
-          image_pull_policy = "IfNotPresent"
+          image             = "ghcr.io/voicaadi/devops-ai-backend:latest"
+          image_pull_policy = "Always"
 
           port {
             container_port = 8000
@@ -63,6 +63,17 @@ resource "kubernetes_deployment_v1" "backend" {
           env {
             name  = "POSTGRES_USER"
             value = "devops_user"
+          }
+
+          env {
+            name = "RESEND_API_KEY"
+
+            value_from {
+              secret_key_ref {
+                name = "devops-ai-resend"
+                key  = "RESEND_API_KEY"
+              }
+            }
           }
 
           readiness_probe {
