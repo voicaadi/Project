@@ -65,8 +65,9 @@ def send_verification_email(to_email: str, code: str) -> None:
                     f"Resend returned HTTP {response.status}"
                 )
     except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(
-            f"Resend email delivery failed: HTTP {error.code}"
+            f"Resend email delivery failed: HTTP {error.code} - {details}"
         ) from None
     except urllib.error.URLError:
         raise RuntimeError("Could not connect to Resend") from None
