@@ -54,6 +54,8 @@ def send_verification_email(to_email: str, code: str) -> None:
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "ADRI-AI-DevOps/1.0",
         },
         method="POST",
     )
