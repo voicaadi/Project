@@ -1,14 +1,14 @@
 
 import hashlib
-import os
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
 from app.database.models import User
@@ -19,6 +19,8 @@ from app.security.auth import (
     decode_access_token,
 )
 from app.services.email_service import send_verification_email
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 bearer_scheme = HTTPBearer()
@@ -90,6 +92,7 @@ def issue_verification_email(user: User, db: Session) -> bool:
         send_verification_email(user.email, token)
         return True
     except Exception:
+        logger.exception("Resend verification email failed")
         return False
 
 
@@ -136,6 +139,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             "Please check your email to verify your account."
         )
     except Exception:
+        logger.exception("Verification email sending failed")
         message = (
             "Account created, but the verification email could not be sent. "
             "Please use the resend verification option."
@@ -179,6 +183,7 @@ def verify_email(token: str, db: Session = Depends(get_db)):
         )
 
     expires_at = user.verification_expires_at
+
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
@@ -237,7 +242,10 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         )
 
     if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account is disabled")
+        raise HTTPException(
+            status_code=403,
+            detail="Account is disabled",
+        )
 
     if not user.is_verified:
         raise HTTPException(
