@@ -32,7 +32,7 @@ function App() {
     {
       role: "assistant",
       content:
-        "Hello! I'm Adrian AI Assistant, powered by Google Gemini. How can I help you today?",
+        "Hello! I'm ADRI AI Assistant, powered by Google Gemini. How can I help you today?",
     },
   ]);
   const [containers, setContainers] = useState([]);
@@ -48,6 +48,7 @@ function App() {
   const [accessToken, setAccessToken] = useState("");
   const [loggedInUser, setLoggedInUser] = useState(null);
   const [loginError, setLoginError] = useState("");
+  const [verificationMessage, setVerificationMessage] = useState("");
   const [workspaceId, setWorkspaceId] = useState("1");
   const [terminalCommand, setTerminalCommand] = useState("");
   const [terminalOutput, setTerminalOutput] = useState("Log in, then enter a Linux command.");
@@ -136,44 +137,91 @@ function App() {
       setLoginError(error.message || "Could not log in.");
     }
   }
-  async function registerAccount(e) {
-    e.preventDefault();
-    setLoginError("");
+async function registerAccount(e) {
+  e.preventDefault();
+  setLoginError("");
+  setVerificationMessage("");
 
-    if (registerPassword.length < 8) {
-      setLoginError("Password must contain at least 8 characters.");
-      return;
-    }
-    if (registerPassword !== registerConfirmPassword) {
-      setLoginError("Passwords do not match.");
-      return;
+  if (registerPassword.length < 8) {
+    setLoginError("Password must contain at least 8 characters.");
+    return;
+  }
+
+  if (registerPassword !== registerConfirmPassword) {
+    setLoginError("Passwords do not match.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const response = await fetch(`${API_URL}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: loginEmail,
+        username: registerUsername,
+        password: registerPassword,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Registration failed.");
     }
 
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/api/auth/register`, {
+    setRegisterPassword("");
+    setRegisterConfirmPassword("");
+    setAuthMode("login");
+    setLoginPassword("");
+    setVerificationMessage(
+      "Account created! Please check your email and click the verification link before logging in."
+    );
+
+  } catch (error) {
+    setLoginError(error.message || "Could not create account.");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function resendVerificationEmail() {
+  setLoginError("");
+  setVerificationMessage("");
+
+  if (!loginEmail) {
+    setLoginError("Please enter your email address first.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const response = await fetch(
+      `${API_URL}/api/auth/resend-verification`,
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: loginEmail,
-          username: registerUsername,
-          password: registerPassword,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Registration failed.");
+        body: JSON.stringify({ email: loginEmail }),
+      }
+    );
 
-      setLoginPassword(registerPassword);
-      setRegisterPassword("");
-      setRegisterConfirmPassword("");
-      setAuthMode("login");
-      setLoginError("Account created successfully! You can now log in.");
-    } catch (error) {
-      setLoginError(error.message || "Could not create account.");
-    } finally {
-      setLoading(false);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Could not resend verification email.");
     }
+
+    setVerificationMessage(
+      data.message || "If your account needs verification, an email will be sent."
+    );
+  } catch (error) {
+    setLoginError(error.message || "Could not resend verification email.");
+  } finally {
+    setLoading(false);
   }
+}
 
   function runTerminalCommand(e) {
     e.preventDefault();
@@ -380,6 +428,12 @@ function App() {
           .adrian-login-form button:disabled{opacity:.65;cursor:wait}
           .adrian-auth-switch{margin-top:10px}
           .adrian-login-error{color:#b42342;font-size:13px;margin:0}
+          .adrian-login-success {
+  color: #16734a;
+  font-size: 13px;
+  margin: 0;
+  line-height: 1.5;
+}
           .adrian-login-footer{display:flex;justify-content:space-between;gap:10px;margin-top:18px;padding-top:0;border-top:0;color:#356b70;font-size:9px;font-weight:700;letter-spacing:.5px}
           @media(max-width:1100px){.adrian-logo{opacity:.55;--w:clamp(48px,6vw,76px)!important}.adrian-logo-field{inset:0 0 0 0}}
           @media(max-width:760px){.adrian-logo{opacity:.18;--w:clamp(34px,7vw,54px)!important}.adrian-logo:nth-child(n+9){display:none}.adrian-login-card{width:min(100%,430px);padding:28px 26px}}
@@ -389,12 +443,12 @@ function App() {
         <section className="adrian-login-card">
           <div className="adrian-login-brand">
             <div className="adrian-login-icon"><Bot size={32} /></div>
-            <div><h1>ADRIAN <span>AI</span></h1><p>DEVOPS ASSISTANT CONSOLE</p></div>
+            <div><h1>ADRI <span>AI</span></h1><p>DEVOPS ASSISTANT CONSOLE</p></div>
           </div>
           <div className="adrian-login-intro">
             <span className="adrian-login-kicker">YOUR DEVOPS COMMAND CENTER</span>
             <h2>Welcome back.</h2>
-            <p>Sign in to access your dashboard, Adrian AI, Docker tools, and personal Ubuntu workspace.</p>
+            <p>Sign in to access your dashboard, ADRI AI, Docker tools, and personal Ubuntu workspace.</p>
           </div>
           <form className="adrian-login-form" onSubmit={authMode === "login" ? loginToTerminal : registerAccount}>
             {authMode === "register" && <>
@@ -421,6 +475,11 @@ function App() {
                 placeholder="Confirm your password" autoComplete="new-password" minLength={8} required />
             </>}
             {loginError && <p className="adrian-login-error" role="alert">{loginError}</p>}
+            {verificationMessage && (
+  <p className="adrian-login-success" role="status">
+    {verificationMessage}
+  </p>
+)}
             <button type="submit" disabled={loading}>
               {loading ? <LoaderCircle size={17} className="spin" /> : authMode === "login" ? <ShieldCheck size={17} /> : null}
               {loading ? "PLEASE WAIT..." : authMode === "login" ? "LOGIN" : "CREATE ACCOUNT"}
@@ -430,6 +489,16 @@ function App() {
             onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setLoginError(""); }}>
             {authMode === "login" ? "REGISTER" : "BACK TO LOGIN"}
           </button>
+          {authMode === "login" && verificationMessage && (
+  <button
+    type="button"
+    className="adrian-auth-switch"
+    onClick={resendVerificationEmail}
+    disabled={loading}
+  >
+    {loading ? "SENDING..." : "RESEND VERIFICATION EMAIL"}
+  </button>
+)}
           <div className="adrian-login-footer">
             <span>API: {backend}</span><span>SECURE WORKSPACE ACCESS</span>
           </div>
@@ -443,7 +512,7 @@ function App() {
         <div className="brand">
           <div className="brand-icon"><Bot size={25} /></div>
           <div>
-            <h1>ADRIAN<span> AI</span></h1>
+            <h1>ADRI<span> AI</span></h1>
             <p>ASSISTANT CONSOLE</p>
           </div>
         </div>
@@ -482,7 +551,7 @@ function App() {
               <small>{backend}</small>
             </div>
           </div>
-          <p className="sidebar-version">ADRIAN AI · VERSION 1.0.0</p>
+          <p className="sidebar-version">ADRI AI · VERSION 1.0.0</p>
         </div>
       </aside>
       <main className="main-content" id="dashboard">
@@ -704,7 +773,7 @@ function App() {
               <div className="terminal-window" style={{ background: "#171923", border: "1px solid #454052", overflow: "hidden" }}>
                 <div className="terminal-window-bar">
                   <span><i /> <i /> <i /></span>
-                  <strong>ADRIAN AI / CLI</strong>
+                  <strong>ADRI AI / CLI</strong>
                   <span className="terminal-readonly">{terminalConnection}</span>
                 </div>
                 <div
@@ -743,7 +812,7 @@ function App() {
                     {item.role === "assistant" ? <Bot size={16} /> : <span>YOU</span>}
                   </div>
                   <div className="message-bubble">
-                    <small>{item.role === "assistant" ? "ADRIAN AI" : "YOU"}</small>
+                    <small>{item.role === "assistant" ? "ADRI AI" : "YOU"}</small>
                     <p>{item.content}</p>
                   </div>
                 </div>
@@ -752,7 +821,7 @@ function App() {
                 <div className="chat-message assistant">
                   <div className="message-avatar"><Bot size={16} /></div>
                   <div className="message-bubble">
-                    <small>ADRIAN AI</small>
+                    <small>ADRI AI</small>
                     <p className="thinking"><LoaderCircle size={15} className="spin" /> Thinking...</p>
                   </div>
                 </div>
@@ -764,7 +833,7 @@ function App() {
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Ask me about Docker, Linux, AWS, Kubernetes..."
-                aria-label="Message the Adrian AI Assistant"
+                aria-label="Message the ADRI AI Assistant"
                 maxLength={4000}
               />
               <button type="submit" disabled={loading || !message.trim()} aria-label="Send message">
@@ -822,7 +891,7 @@ function App() {
         </div>
         <footer className="page-footer">
           <span>✳ BUILT FOR YOUR DEVOPS WORKFLOW</span>
-          <span>ADRIAN AI ASSISTANT · 2026</span>
+          <span>ADRI AI ASSISTANT · 2026</span>
         </footer>
       </main>
     </div>

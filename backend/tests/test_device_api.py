@@ -1,3 +1,4 @@
+
 import uuid
 
 import pytest
@@ -8,7 +9,6 @@ from sqlalchemy.engine import URL
 
 from app.main import app
 from app.database.connection import (
-    Base,
     POSTGRES_USER,
     POSTGRES_PASSWORD,
     POSTGRES_HOST,
@@ -19,7 +19,6 @@ from app.database.connection import (
 
 @pytest.fixture
 def test_client():
-    # Always connect to the dedicated test database.
     test_url = URL.create(
         "postgresql+psycopg2",
         username=POSTGRES_USER,
@@ -34,11 +33,11 @@ def test_client():
     transaction = connection.begin()
 
     TestingSessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=connection,
-    join_transaction_mode="create_savepoint",
-)
+        autocommit=False,
+        autoflush=False,
+        bind=connection,
+        join_transaction_mode="create_savepoint",
+    )
 
     def override_get_db():
         db = TestingSessionLocal()
@@ -59,13 +58,21 @@ def test_client():
         test_engine.dispose()
 
 
-def test_device_pairing_and_revocation(test_client):
-    # Register a test user.
+def test_device_pairing_and_revocation(test_client, monkeypatch):
     unique_id = uuid.uuid4().hex
     email = f"{unique_id}@example.com"
     username = f"user_{unique_id[:12]}"
     password = "TestPassword123!"
 
+    # Mock Resend and capture the verification token.
+    verification = {}
+
+    monkeypatch.setattr(
+        "app.api.auth_routes.send_verification_email",
+        lambda email, token: verification.update(token=token),
+    )
+
+    # Register a test user.
     response = test_client.post(
         "/api/auth/register",
         json={
@@ -75,6 +82,15 @@ def test_device_pairing_and_revocation(test_client):
         },
     )
     assert response.status_code == 201
+    assert "token" in verification
+
+    # Verify the email.
+    response = test_client.get(
+        "/api/auth/verify-email",
+        params={"token": verification["token"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["verified"] is True
 
     # Log in.
     response = test_client.post(
@@ -95,9 +111,6 @@ def test_device_pairing_and_revocation(test_client):
     pairing_code = response.json()["code"]
     assert len(pairing_code) == 32
 
-    response = test_client.get("/api/auth/me", headers=headers)
-    print("AUTH BEFORE CLAIM:", response.status_code, response.text)
-
     # Claim the pairing code.
     response = test_client.post(
         "/api/devices/claim",
@@ -112,9 +125,6 @@ def test_device_pairing_and_revocation(test_client):
     device_id = result["device_id"]
     assert result["device_token"]
 
-    response = test_client.get("/api/auth/me", headers=headers)
-    print("AUTH AFTER CLAIM:", response.status_code, response.text)
-
     # Check that the pairing code cannot be reused.
     response = test_client.post(
         "/api/devices/claim",
@@ -128,7 +138,6 @@ def test_device_pairing_and_revocation(test_client):
 
     # List devices.
     response = test_client.get("/api/devices/", headers=headers)
-    print("DEVICE LIST RESPONSE:", response.status_code, response.text)
     assert response.status_code == 200
     assert any(device["id"] == device_id for device in response.json())
 
@@ -142,8 +151,40 @@ def test_device_pairing_and_revocation(test_client):
     # Confirm it is inactive.
     response = test_client.get("/api/devices/", headers=headers)
     assert response.status_code == 200
+
     device = next(
         device for device in response.json()
         if device["id"] == device_id
     )
     assert device["is_active"] is False
+def test_unverified_user_cannot_login(test_client, monkeypatch):
+    unique_id = uuid.uuid4().hex
+
+    monkeypatch.setattr(
+        "app.api.auth_routes.send_verification_email",
+        lambda email, token: None,
+    )
+
+    # Register an account without verifying its email.
+    response = test_client.post(
+        "/api/auth/register",
+        json={
+            "email": f"{unique_id}@example.com",
+            "username": f"user_{unique_id[:12]}",
+            "password": "TestPassword123!",
+        },
+    )
+
+    assert response.status_code == 201
+
+    # Attempt login without email verification.
+    response = test_client.post(
+        "/api/auth/login",
+        json={
+            "email": f"{unique_id}@example.com",
+            "password": "TestPassword123!",
+        },
+    )
+
+    assert response.status_code == 403
+    assert "verify your email" in response.json()["detail"].lower()

@@ -21,6 +21,9 @@ class User(Base):
     username = Column(String(100), unique=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, nullable=False, default=True, server_default="true")
+    verification_token_hash = Column(String(64), nullable=True)
+    verification_expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # A user can own multiple workspaces
