@@ -4,7 +4,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
@@ -18,6 +18,7 @@ from app.security.auth import (
     create_access_token,
     decode_access_token,
 )
+from app.security.rate_limit import limiter
 from app.services.email_service import send_verification_email
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 bearer_scheme = HTTPBearer()
 
-VERIFICATION_TOKEN_HOURS = 24
+VERIFICATION_CODE_HOURS = 24
 
 
 class RegisterRequest(BaseModel):
@@ -43,17 +44,22 @@ class ResendVerificationRequest(BaseModel):
     email: EmailStr
 
 
-def hash_verification_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(pattern=r"^\d{6}$")
 
 
-def create_verification_token():
-    token = secrets.token_urlsafe(32)
-    token_hash = hash_verification_token(token)
+def hash_verification_code(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def create_verification_code():
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    code_hash = hash_verification_code(code)
     expires_at = datetime.now(timezone.utc) + timedelta(
-        hours=VERIFICATION_TOKEN_HOURS
+        hours=VERIFICATION_CODE_HOURS
     )
-    return token, token_hash, expires_at
+    return code, code_hash, expires_at
 
 
 def get_current_user(
@@ -81,19 +87,19 @@ def get_current_user(
 
 
 def issue_verification_email(user: User, db: Session) -> bool:
-    token, token_hash, expires_at = create_verification_token()
+    code, code_hash, expires_at = create_verification_code()
 
-    user.verification_token_hash = token_hash
+    user.verification_token_hash = code_hash
     user.verification_expires_at = expires_at
-
     db.commit()
 
     try:
-        send_verification_email(user.email, token)
+        send_verification_email(user.email, code)
         return True
     except Exception:
-        logger.exception("Resend verification email failed")
+        logger.exception("Verification code email failed")
         return False
+
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -109,15 +115,11 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             detail="Email or username already registered",
         )
 
-    token, token_hash, expires_at = create_verification_token()
-
     user = User(
         email=data.email,
         username=data.username,
         hashed_password=hash_password(data.password),
         is_verified=False,
-        verification_token_hash=token_hash,
-        verification_expires_at=expires_at,
     )
 
     db.add(user)
@@ -132,21 +134,19 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             detail="Email or username already registered",
         )
 
-    try:
-        send_verification_email(user.email, token)
-        message = (
-            "Account created successfully. "
-            "Please check your email to verify your account."
-        )
-    except Exception:
-        logger.exception("Verification email sending failed")
-        message = (
-            "Account created, but the verification email could not be sent. "
-            "Please use the resend verification option."
-        )
+    sent = issue_verification_email(user, db)
+
+    if not sent:
+        logger.error("Could not send verification code to %s", user.email)
 
     return {
-        "message": message,
+        "message": (
+            "Account created. Please enter the six-digit "
+            "verification code sent to your email."
+            if sent else
+            "Account created, but the verification code could not be sent. "
+            "Please request a new code."
+        ),
         "email_verification_required": True,
         "user": {
             "id": user.id,
@@ -156,30 +156,27 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/verify-email")
-def verify_email(token: str, db: Session = Depends(get_db)):
-    if not token:
+
+
+@router.post("/verify-email")
+@limiter.limit("5/minute")
+def verify_email(
+    request: Request,
+    data: VerifyEmailRequest,
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email == data.email).first()
+
+    if not user or user.is_verified:
         raise HTTPException(
             status_code=400,
-            detail="Verification token is required",
+            detail="Invalid verification request.",
         )
 
-    token_hash = hash_verification_token(token)
-
-    user = db.query(User).filter(
-        User.verification_token_hash == token_hash
-    ).first()
-
-    if not user:
+    if not user.verification_token_hash or not user.verification_expires_at:
         raise HTTPException(
             status_code=400,
-            detail="Invalid or already used verification link",
-        )
-
-    if not user.verification_expires_at:
-        raise HTTPException(
-            status_code=400,
-            detail="Verification link has expired",
+            detail="No active verification code. Request a new code.",
         )
 
     expires_at = user.verification_expires_at
@@ -190,7 +187,18 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     if expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=400,
-            detail="Verification link has expired. Request a new one.",
+            detail="Verification code expired. Request a new code.",
+        )
+
+    submitted_hash = hash_verification_code(data.code)
+
+    if not secrets.compare_digest(
+        submitted_hash,
+        user.verification_token_hash,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Incorrect verification code.",
         )
 
     user.is_verified = True
@@ -205,8 +213,11 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     }
 
 
+
 @router.post("/resend-verification")
+@limiter.limit("3/minute")
 def resend_verification(
+    request: Request,
     data: ResendVerificationRequest,
     db: Session = Depends(get_db),
 ):

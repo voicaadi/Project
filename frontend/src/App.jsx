@@ -49,6 +49,8 @@ function App() {
   const [loggedInUser, setLoggedInUser] = useState(null);
   const [loginError, setLoginError] = useState("");
   const [verificationMessage, setVerificationMessage] = useState("");
+  const [verificationStep, setVerificationStep] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
   const [workspaceId, setWorkspaceId] = useState("1");
   const [terminalCommand, setTerminalCommand] = useState("");
   const [terminalOutput, setTerminalOutput] = useState("Log in, then enter a Linux command.");
@@ -173,10 +175,11 @@ async function registerAccount(e) {
 
     setRegisterPassword("");
     setRegisterConfirmPassword("");
-    setAuthMode("login");
-    setLoginPassword("");
+    setVerificationStep(true);
+    setVerificationCode("");
     setVerificationMessage(
-      "Account created! Please check your email and click the verification link before logging in."
+      data.message ||
+      "Account created. Enter the six-digit code sent to your email."
     );
 
   } catch (error) {
@@ -186,6 +189,48 @@ async function registerAccount(e) {
   }
 }
 
+async function verifyEmailCode(e) {
+  e.preventDefault();
+  setLoginError("");
+  setVerificationMessage("");
+
+  if (!/^\d{6}$/.test(verificationCode)) {
+    setLoginError("Enter the six-digit verification code.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const response = await fetch(`${API_URL}/api/auth/verify-email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: loginEmail,
+        code: verificationCode,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Verification failed.");
+    }
+
+    setVerificationStep(false);
+    setVerificationCode("");
+    setAuthMode("login");
+    setLoginPassword("");
+    setVerificationMessage(
+      "Email verified successfully. You can now log in."
+    );
+
+  } catch (error) {
+    setLoginError(error.message || "Could not verify email.");
+  } finally {
+    setLoading(false);
+  }
+}
 async function resendVerificationEmail() {
   setLoginError("");
   setVerificationMessage("");
@@ -214,7 +259,7 @@ async function resendVerificationEmail() {
     }
 
     setVerificationMessage(
-      data.message || "If your account needs verification, an email will be sent."
+      data.message || "A new verification code has been sent. Please check your email."
     );
   } catch (error) {
     setLoginError(error.message || "Could not resend verification email.");
@@ -450,55 +495,168 @@ async function resendVerificationEmail() {
             <h2>Welcome back.</h2>
             <p>Sign in to access your dashboard, ADRI AI, Docker tools, and personal Ubuntu workspace.</p>
           </div>
-          <form className="adrian-login-form" onSubmit={authMode === "login" ? loginToTerminal : registerAccount}>
-            {authMode === "register" && <>
-              <label htmlFor="register-username">USERNAME</label>
-              <input id="register-username" type="text" value={registerUsername}
-                onChange={(e) => setRegisterUsername(e.target.value)} placeholder="Choose a username"
-                minLength={3} maxLength={100} autoComplete="username" required />
-            </>}
-            <label htmlFor="adrian-login-email">EMAIL ADDRESS</label>
-            <input id="adrian-login-email" type="email" value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)} placeholder="you@example.com"
-              autoComplete="email" required />
-            <label htmlFor="adrian-login-password">PASSWORD</label>
-            <input id="adrian-login-password" type="password"
-              value={authMode === "login" ? loginPassword : registerPassword}
-              onChange={(e) => authMode === "login" ? setLoginPassword(e.target.value) : setRegisterPassword(e.target.value)}
-              placeholder="Enter your password"
-              autoComplete={authMode === "login" ? "current-password" : "new-password"}
-              minLength={authMode === "register" ? 8 : undefined} required />
-            {authMode === "register" && <>
-              <label htmlFor="register-confirm-password">CONFIRM PASSWORD</label>
-              <input id="register-confirm-password" type="password" value={registerConfirmPassword}
-                onChange={(e) => setRegisterConfirmPassword(e.target.value)}
-                placeholder="Confirm your password" autoComplete="new-password" minLength={8} required />
-            </>}
-            {loginError && <p className="adrian-login-error" role="alert">{loginError}</p>}
+
+          <form
+            className="adrian-login-form"
+            onSubmit={
+              verificationStep
+                ? verifyEmailCode
+                : authMode === "login"
+                  ? loginToTerminal
+                  : registerAccount
+            }
+          >
+            {verificationStep ? (
+              <>
+                <label htmlFor="verification-code">SIX-DIGIT VERIFICATION CODE</label>
+                <input
+                  id="verification-code"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={verificationCode}
+                  onChange={(e) =>
+                    setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                  }
+                  placeholder="Enter 6-digit code"
+                  autoComplete="one-time-code"
+                  required
+                />
+              </>
+            ) : (
+              <>
+                {authMode === "register" && (
+                  <>
+                    <label htmlFor="register-username">USERNAME</label>
+                    <input
+                      id="register-username"
+                      type="text"
+                      value={registerUsername}
+                      onChange={(e) => setRegisterUsername(e.target.value)}
+                      placeholder="Choose a username"
+                      minLength={3}
+                      maxLength={100}
+                      autoComplete="username"
+                      required
+                    />
+                  </>
+                )}
+
+                <label htmlFor="adrian-login-email">EMAIL ADDRESS</label>
+                <input
+                  id="adrian-login-email"
+                  type="email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  required
+                />
+
+                <label htmlFor="adrian-login-password">PASSWORD</label>
+                <input
+                  id="adrian-login-password"
+                  type="password"
+                  value={authMode === "login" ? loginPassword : registerPassword}
+                  onChange={(e) =>
+                    authMode === "login"
+                      ? setLoginPassword(e.target.value)
+                      : setRegisterPassword(e.target.value)
+                  }
+                  placeholder="Enter your password"
+                  autoComplete={
+                    authMode === "login" ? "current-password" : "new-password"
+                  }
+                  minLength={authMode === "register" ? 8 : undefined}
+                  required
+                />
+
+                {authMode === "register" && (
+                  <>
+                    <label htmlFor="register-confirm-password">CONFIRM PASSWORD</label>
+                    <input
+                      id="register-confirm-password"
+                      type="password"
+                      value={registerConfirmPassword}
+                      onChange={(e) => setRegisterConfirmPassword(e.target.value)}
+                      placeholder="Confirm your password"
+                      autoComplete="new-password"
+                      minLength={8}
+                      required
+                    />
+                  </>
+                )}
+              </>
+            )}
+
+            {loginError && (
+              <p className="adrian-login-error" role="alert">{loginError}</p>
+            )}
+
             {verificationMessage && (
-  <p className="adrian-login-success" role="status">
-    {verificationMessage}
-  </p>
-)}
+              <p className="adrian-login-success" role="status">
+                {verificationMessage}
+              </p>
+            )}
+
             <button type="submit" disabled={loading}>
-              {loading ? <LoaderCircle size={17} className="spin" /> : authMode === "login" ? <ShieldCheck size={17} /> : null}
-              {loading ? "PLEASE WAIT..." : authMode === "login" ? "LOGIN" : "CREATE ACCOUNT"}
+              {loading ? (
+                <LoaderCircle size={17} className="spin" />
+              ) : verificationStep ? (
+                <ShieldCheck size={17} />
+              ) : authMode === "login" ? (
+                <ShieldCheck size={17} />
+              ) : null}
+              {loading
+                ? "PLEASE WAIT..."
+                : verificationStep
+                  ? "VERIFY EMAIL"
+                  : authMode === "login"
+                    ? "LOGIN"
+                    : "CREATE ACCOUNT"}
             </button>
           </form>
-          <button type="button" className="adrian-auth-switch"
-            onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setLoginError(""); }}>
-            {authMode === "login" ? "REGISTER" : "BACK TO LOGIN"}
-          </button>
-          {authMode === "login" && verificationMessage && (
-  <button
-    type="button"
-    className="adrian-auth-switch"
-    onClick={resendVerificationEmail}
-    disabled={loading}
-  >
-    {loading ? "SENDING..." : "RESEND VERIFICATION EMAIL"}
-  </button>
-)}
+
+          {verificationStep ? (
+            <>
+              <button
+                type="button"
+                className="adrian-auth-switch"
+                onClick={resendVerificationEmail}
+                disabled={loading}
+              >
+                {loading ? "SENDING..." : "RESEND VERIFICATION CODE"}
+              </button>
+
+              <button
+                type="button"
+                className="adrian-auth-switch"
+                onClick={() => {
+                  setVerificationStep(false);
+                  setVerificationCode("");
+                  setVerificationMessage("");
+                  setLoginError("");
+                  setAuthMode("login");
+                }}
+                disabled={loading}
+              >
+                BACK TO LOGIN
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="adrian-auth-switch"
+              onClick={() => {
+                setAuthMode(authMode === "login" ? "register" : "login");
+                setLoginError("");
+                setVerificationMessage("");
+              }}
+            >
+              {authMode === "login" ? "REGISTER" : "BACK TO LOGIN"}
+            </button>
+          )}
           <div className="adrian-login-footer">
             <span>API: {backend}</span><span>SECURE WORKSPACE ACCESS</span>
           </div>

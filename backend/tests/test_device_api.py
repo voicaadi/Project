@@ -64,13 +64,13 @@ def test_device_pairing_and_revocation(test_client, monkeypatch):
     username = f"user_{unique_id[:12]}"
     password = "TestPassword123!"
 
-    # Mock Resend and capture the verification token.
+    # Mock Resend and capture the verification code.
     verification = {}
 
     monkeypatch.setattr(
         "app.api.auth_routes.send_verification_email",
-        lambda email, token: verification.update(token=token),
-    )
+        lambda email, code: verification.update(code=code),
+)
 
     # Register a test user.
     response = test_client.post(
@@ -82,12 +82,12 @@ def test_device_pairing_and_revocation(test_client, monkeypatch):
         },
     )
     assert response.status_code == 201
-    assert "token" in verification
+    assert "code" in verification
 
     # Verify the email.
-    response = test_client.get(
+    response = test_client.post(
         "/api/auth/verify-email",
-        params={"token": verification["token"]},
+        json={"email": email, "code": verification["code"]},
     )
     assert response.status_code == 200
     assert response.json()["verified"] is True

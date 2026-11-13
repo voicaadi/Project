@@ -3,56 +3,40 @@ import json
 import os
 import urllib.error
 import urllib.request
-from html import escape
 
 
 RESEND_API_URL = "https://api.resend.com/emails"
 
 
-def send_verification_email(to_email: str, token: str) -> None:
+def send_verification_email(to_email: str, code: str) -> None:
     api_key = os.getenv("RESEND_API_KEY")
 
     if not api_key:
         raise RuntimeError("RESEND_API_KEY is not configured")
-
-    frontend_url = os.getenv(
-        "FRONTEND_URL",
-        "https://devopsadi.com",
-    ).rstrip("/")
 
     from_email = os.getenv(
         "RESEND_FROM_EMAIL",
         "ADRI AI <noreply@devopsadi.com>",
     )
 
-    verification_url = f"{frontend_url}/api/auth/verify-email?token={token}"
-
-    safe_url = escape(verification_url, quote=True)
-
     html_content = f"""
     <!DOCTYPE html>
     <html>
-      <body style="font-family: Arial, sans-serif; color: #222;">
-        <h2>Welcome to ADRI AI!</h2>
-
-        <p>Thank you for creating your account.</p>
-
-        <p>Please verify your email address by clicking below:</p>
-
-        <p>
-          <a href="{safe_url}"
-             style="background:#2563eb;color:white;padding:12px 24px;
-                    text-decoration:none;border-radius:6px;
-                    display:inline-block;">
-            Verify my email
-          </a>
-        </p>
-
-        <p>This link expires in 24 hours and can only be used once.</p>
-
-        <p>If you did not create this account, you can ignore this email.</p>
-
-        <p>ADRI AI Team</p>
+      <body style="font-family: Arial, sans-serif; color: #302642;">
+        <div style="max-width: 500px; margin: 30px auto; padding: 30px;
+                    background: #fff4dc; border-radius: 12px;
+                    text-align: center;">
+          <h2>Welcome to ADRI AI!</h2>
+          <p>Use this verification code to activate your account:</p>
+          <div style="font-size: 36px; font-weight: bold;
+                      letter-spacing: 10px; padding: 20px;
+                      background: white; border-radius: 10px;">
+            {code}
+          </div>
+          <p>This code expires in 24 hours and can only be used once.</p>
+          <p>If you did not create this account, ignore this email.</p>
+          <p>ADRI AI Team</p>
+        </div>
       </body>
     </html>
     """
@@ -60,7 +44,7 @@ def send_verification_email(to_email: str, token: str) -> None:
     payload = {
         "from": from_email,
         "to": [to_email],
-        "subject": "Verify your ADRI AI email address",
+        "subject": "Your ADRI AI verification code",
         "html": html_content,
     }
 
@@ -80,11 +64,9 @@ def send_verification_email(to_email: str, token: str) -> None:
                 raise RuntimeError(
                     f"Resend returned HTTP {response.status}"
                 )
-
     except urllib.error.HTTPError as error:
         raise RuntimeError(
             f"Resend email delivery failed: HTTP {error.code}"
         ) from None
-
     except urllib.error.URLError:
         raise RuntimeError("Could not connect to Resend") from None
