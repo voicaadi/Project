@@ -9,12 +9,14 @@ from sqlalchemy.engine import URL
 
 from app.main import app
 from app.database.connection import (
+    Base,
     POSTGRES_USER,
     POSTGRES_PASSWORD,
     POSTGRES_HOST,
     POSTGRES_PORT,
     get_db,
 )
+from app.database import models
 
 
 @pytest.fixture
@@ -29,6 +31,7 @@ def test_client():
     )
 
     test_engine = create_engine(test_url)
+    Base.metadata.create_all(bind=test_engine)
     connection = test_engine.connect()
     transaction = connection.begin()
 
@@ -49,7 +52,7 @@ def test_client():
     app.dependency_overrides[get_db] = override_get_db
 
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             yield client
     finally:
         app.dependency_overrides.clear()
@@ -98,6 +101,35 @@ def test_device_pairing_and_revocation(test_client, monkeypatch):
         json={"email": email, "password": password},
     )
     assert response.status_code == 200
+
+    first_refresh_cookie = response.cookies.get("adri_refresh")
+    assert first_refresh_cookie
+
+    # Refresh the session and verify token rotation.
+    response = test_client.post("/api/auth/refresh")
+    assert response.status_code == 200
+
+    second_refresh_cookie = response.cookies.get("adri_refresh")
+    assert second_refresh_cookie
+    assert second_refresh_cookie != first_refresh_cookie
+
+    # Replaying the old token must not delete the replacement cookie.
+    test_client.cookies.clear()
+    test_client.cookies.set(
+        "adri_refresh",
+        first_refresh_cookie,
+        path="/api/auth",
+    )
+    replay_response = test_client.post("/api/auth/refresh")
+    assert replay_response.status_code == 401
+    assert "set-cookie" not in replay_response.headers
+
+    # Restore the replacement cookie for the remaining test.
+    test_client.cookies.set(
+        "adri_refresh",
+        second_refresh_cookie,
+        path="/api/auth",
+    )
 
     access_token = response.json()["access_token"]
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -157,6 +189,13 @@ def test_device_pairing_and_revocation(test_client, monkeypatch):
         if device["id"] == device_id
     )
     assert device["is_active"] is False
+
+    # Logout must revoke the refresh session.
+    response = test_client.post("/api/auth/logout")
+    assert response.status_code == 200
+
+    response = test_client.post("/api/auth/refresh")
+    assert response.status_code == 401
 def test_unverified_user_cannot_login(test_client, monkeypatch):
     unique_id = uuid.uuid4().hex
 

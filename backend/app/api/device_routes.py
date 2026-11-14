@@ -1,3 +1,4 @@
+import logging
 from uuid import uuid4
 from app.security.auth import decode_access_token
 import asyncio
@@ -118,7 +119,7 @@ def claim_device(
 
 
 @router.get("/")
-def list_devices(
+async def list_devices(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -129,21 +130,26 @@ def list_devices(
         .all()
     )
 
-    return [
-        {
+    result = []
+    for device in devices:
+        result.append({
             "id": device.id,
             "device_name": device.device_name,
             "operating_system": device.operating_system,
             "is_active": device.is_active,
+            "is_connected": (
+                device.is_active
+                and await device_connections.is_connected(device.id)
+            ),
             "last_seen_at": device.last_seen_at,
             "created_at": device.created_at,
-        }
-        for device in devices
-    ]
+        })
+
+    return result
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
-def revoke_device(
+async def revoke_device(
     device_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -162,6 +168,8 @@ def revoke_device(
 
     device.is_active = False
     db.commit()
+
+    await device_connections.revoke(device_id)
 @router.websocket("/agent/connect")
 async def agent_connect(websocket: WebSocket):
     await websocket.accept()
@@ -176,7 +184,10 @@ async def agent_connect(websocket: WebSocket):
             timeout=10,
         )
 
-        if auth_message.get("type") != "authenticate":
+        if (
+            not isinstance(auth_message, dict)
+            or auth_message.get("type") != "authenticate"
+        ):
             await websocket.close(code=4401)
             return
 
@@ -205,7 +216,18 @@ async def agent_connect(websocket: WebSocket):
         })
 
         while True:
+            message = await websocket.receive_json()
+
+            # Stop processing messages after this connection is revoked
+            # or replaced by a newer connection.
+            if await device_connections.get_connection(device_id) is not websocket:
+                break
+
+            if not isinstance(message, dict):
+                continue
+
             message_type = message.get("type")
+
 
             if message_type == "heartbeat":
                 device.last_seen_at = datetime.now(timezone.utc)
@@ -251,6 +273,10 @@ async def agent_connect(websocket: WebSocket):
         pass
 
     except Exception:
+        logging.getLogger(__name__).exception(
+            "Unexpected error in device agent WebSocket (device_id=%s)",
+            device_id,
+        )
         db.rollback()
         try:
             await websocket.close(code=1011)

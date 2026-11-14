@@ -7,6 +7,7 @@ import {
   Terminal,
   FolderOpen,
   Activity,
+  Monitor,
   Settings,
   Send,
   Server,
@@ -46,6 +47,14 @@ function App() {
   const [registerPassword, setRegisterPassword] = useState("");
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
   const [accessToken, setAccessToken] = useState("");
+  const [authChecking, setAuthChecking] = useState(true);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [deviceError, setDeviceError] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingExpiresIn, setPairingExpiresIn] = useState(0);
+  const [agentConnecting, setAgentConnecting] = useState(false);
+  const [agentConnectionMessage, setAgentConnectionMessage] = useState("");
   const [loggedInUser, setLoggedInUser] = useState(null);
   const [loginError, setLoginError] = useState("");
   const [verificationMessage, setVerificationMessage] = useState("");
@@ -62,6 +71,57 @@ function App() {
   const xtermHostRef = useRef(null);
   const xtermRef = useRef(null);
   const [terminalConnection, setTerminalConnection] = useState("Disconnected");
+  const logoutFromApp = async () => {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (error) {
+      console.error("Backend logout failed:", error);
+    } finally {
+      terminalSocketRef.current?.close(1000, "User logged out");
+      terminalSocketRef.current = null;
+      setAccessToken("");
+      setLoggedInUser(null);
+      setLoginEmail("");
+      setLoginPassword("");
+      setTerminalError("");
+      setTerminalOutput("Logged out. Please sign in to continue.");
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreSession() {
+      try {
+        const response = await fetch(`${API_URL}/api/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (cancelled) return;
+
+        setAccessToken(data.access_token);
+        setLoggedInUser(data.user);
+      } catch (error) {
+        console.error("Session restoration failed:", error);
+      } finally {
+        if (!cancelled) setAuthChecking(false);
+      }
+    }
+
+    restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     fetch(`${API_URL}/health`)
       .then((response) => {
@@ -126,6 +186,7 @@ function App() {
     try {
       const response = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: loginEmail, password: loginPassword }),
       });
@@ -139,6 +200,145 @@ function App() {
       setLoginError(error.message || "Could not log in.");
     }
   }
+  async function connectLocalAgent() {
+    if (!pairingCode) return;
+
+    setAgentConnecting(true);
+    setAgentConnectionMessage("");
+    setDeviceError("");
+
+    try {
+      const response = await fetch("http://127.0.0.1:8765/pair", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code: pairingCode }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail || `Local agent pairing failed (${response.status}).`
+        );
+      }
+
+      setAgentConnectionMessage(
+        `Device #${data.device_id} paired successfully. Backend connection is starting.`
+      );
+      setPairingCode("");
+      setPairingExpiresIn(0);
+    } catch (error) {
+      setDeviceError(
+        error instanceof TypeError
+          ? "Could not reach the local agent. Make sure it is running at 127.0.0.1:8765."
+          : error.message || "Could not connect the local agent."
+      );
+    } finally {
+      setAgentConnecting(false);
+    }
+  }
+
+  async function createPairingCode() {
+    setDevicesLoading(true);
+    setDeviceError("");
+    setPairingCode("");
+    setPairingExpiresIn(0);
+
+    try {
+      const response = await fetch(`${API_URL}/api/devices/pairing`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not create pairing code.");
+      }
+
+      setPairingCode(data.code);
+      setPairingExpiresIn(data.expires_in_seconds || 300);
+    } catch (error) {
+      setDeviceError(error.message || "Could not create pairing code.");
+    } finally {
+      setDevicesLoading(false);
+    }
+  }
+
+  async function loadDevices() {
+    if (!accessToken) {
+      setDevices([]);
+      return;
+    }
+
+    setDevicesLoading(true);
+    setDeviceError("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/devices/`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not load devices.");
+      }
+
+      setDevices(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setDeviceError(error.message || "Could not load devices.");
+    } finally {
+      setDevicesLoading(false);
+    }
+  }
+
+  async function revokeDevice(deviceId) {
+    if (!window.confirm("Revoke this device's access to ADRI AI?")) {
+      return;
+    }
+
+    setDevicesLoading(true);
+    setDeviceError("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/devices/${deviceId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || "Could not revoke device.");
+      }
+
+      await loadDevices();
+    } catch (error) {
+      setDeviceError(error.message || "Could not revoke device.");
+      setDevicesLoading(false);
+    }
+  }
+
+
+  useEffect(() => {
+    if (!accessToken) {
+      setDevices([]);
+      return;
+    }
+
+    loadDevices();
+  }, [accessToken]);
+
+
 async function registerAccount(e) {
   e.preventDefault();
   setLoginError("");
@@ -421,6 +621,14 @@ async function resendVerificationEmail() {
       .join(" · ");
   }
 
+  if (authChecking) {
+    return (
+      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        Restoring your session...
+      </main>
+    );
+  }
+
   if (!accessToken) {
     return (
       <main className="adrian-login-page">
@@ -688,6 +896,9 @@ async function resendVerificationEmail() {
           <a className="nav-item" href="#activity">
             <Activity size={18} /> Activity
           </a>
+          <a className="nav-item" href="#devices">
+            <Monitor size={18} /> Devices
+          </a>
         </nav>
         <div className="sidebar-label tools-label">TOOLS</div>
         <nav className="nav-menu">
@@ -720,16 +931,13 @@ async function resendVerificationEmail() {
           </div>
           <div className="topbar-right">
             <span className="date-label">{new Date().toLocaleDateString()}</span>
-            <button type="button" className="refresh-button" onClick={() => {
-              terminalSocketRef.current?.close(1000, "User logged out");
-              terminalSocketRef.current = null;
-              setAccessToken("");
-              setLoggedInUser(null);
-              setLoginEmail("");
-              setLoginPassword("");
-              setTerminalError("");
-              setTerminalOutput("Please sign in to continue.");
-            }}>Log out</button>
+            <button
+              type="button"
+              className="refresh-button"
+              onClick={logoutFromApp}
+            >
+              Log out
+            </button>
             <div className="avatar"><Bot size={19} /></div>
           </div>
         </header>
@@ -784,16 +992,13 @@ async function resendVerificationEmail() {
                 <p>Live overview from your Docker Engine</p>
               </div>
             </div>
-            <button
-              className="refresh-button"
-              type="button"
-              onClick={loadContainers}
-              disabled={dockerLoading}
-            >
+            <button type="button" className="refresh-button"
+              onClick={loadContainers} disabled={dockerLoading}>
               <RefreshCw size={15} className={dockerLoading ? "spin" : ""} />
               {dockerLoading ? "Refreshing..." : "Refresh"}
             </button>
           </div>
+
           {dockerError ? (
             <div className="docker-message docker-error">
               <CircleAlert size={18} />
@@ -835,11 +1040,148 @@ async function resendVerificationEmail() {
               ))}
             </div>
           )}
+
           <div className="panel-footer">
             <span>{containers.length} container{containers.length === 1 ? "" : "s"} detected</span>
             <span>{dockerOnline ? "Docker connection active" : "Waiting for Docker connection"}</span>
           </div>
         </section>
+
+        <section className="panel devices-panel" id="devices">
+          <div className="panel-header">
+            <div className="panel-title">
+              <div className="panel-icon"><Monitor size={19} /></div>
+              <div>
+                <h3>Connected Devices</h3>
+                <p>Manage your ADRI AI local agents</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="refresh-button"
+              onClick={loadDevices}
+              disabled={devicesLoading || !accessToken}
+            >
+              <RefreshCw size={15} className={devicesLoading ? "spin" : ""} />
+              Refresh
+            </button>
+          </div>
+
+          {devicesLoading && devices.length === 0 ? (
+            <div className="docker-message">
+              <LoaderCircle size={19} className="spin" />
+              <span>Loading devices...</span>
+            </div>
+          ) : devices.length === 0 ? (
+            <div className="docker-message empty-state">
+              <Monitor size={22} />
+              <div>
+                <strong>No devices registered yet</strong>
+                <p>Generate a pairing code to connect your computer to ADRI AI.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="container-list">
+              {devices.map((device) => (
+                <article className="container-row" key={device.id}>
+                  <div className="container-symbol">
+                    <Monitor size={19} />
+                  </div>
+                  <div className="container-main">
+                    <strong>{device.device_name}</strong>
+                    <small>{device.operating_system}</small>
+                    <small>
+                      Last seen: {device.last_seen_at
+                        ? new Date(device.last_seen_at).toLocaleString()
+                        : "Never"}
+                    </small>
+                  </div>
+                  <div className="container-meta">
+                    <span className={`container-status ${
+                      !device.is_active
+                        ? "stopped"
+                        : device.is_connected
+                          ? "running"
+                          : "stopped"
+                    }`}>
+                      <span />
+                      {!device.is_active
+                        ? "Revoked"
+                        : device.is_connected
+                          ? "Connected"
+                          : "Offline"}
+                    </span>
+                    {device.is_active && (
+                      <button
+                        type="button"
+                        className="refresh-button"
+                        onClick={() => revokeDevice(device.id)}
+                        disabled={devicesLoading}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            <button
+              type="button"
+              className="terminal-run-button"
+              onClick={createPairingCode}
+              disabled={devicesLoading || !accessToken}
+            >
+              {devicesLoading ? "Generating..." : "Generate Pairing Code"}
+            </button>
+          </div>
+
+          {deviceError && (
+            <div className="docker-message docker-error" role="alert">
+              <CircleAlert size={18} />
+              <p>{deviceError}</p>
+            </div>
+          )}
+
+          {pairingCode && (
+            <div className="docker-message" style={{ marginTop: 16 }}>
+              <div>
+                <strong>Your device pairing code</strong>
+                <h2 style={{ letterSpacing: 5, margin: "12px 0", fontSize: 28 }}>
+                  {pairingCode}
+                </h2>
+                <p>Expires in {Math.ceil(pairingExpiresIn / 60)} minutes.</p>
+              </div>
+            </div>
+          )}
+          {agentConnectionMessage && (
+            <div className="docker-message" role="status" style={{ marginTop: 16 }}>
+              <CircleCheck size={18} />
+              <p>{agentConnectionMessage}</p>
+            </div>
+          )}
+
+          {pairingCode && (
+            <div style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                className="terminal-run-button"
+                onClick={connectLocalAgent}
+                disabled={agentConnecting}
+              >
+                {agentConnecting ? "Connecting..." : "Connect Local Agent"}
+              </button>
+            </div>
+          )}
+
+          <div className="panel-footer">
+            <span>Device registration</span>
+            <span>Secure pairing</span>
+          </div>
+        </section>
+
         <section className="panel terminal-panel" id="terminal">
           <div className="panel-header">
             <div className="panel-title">
@@ -853,12 +1195,7 @@ async function resendVerificationEmail() {
               <button
                 className="refresh-button"
                 type="button"
-                onClick={() => {
-                  setAccessToken("");
-                  setLoggedInUser(null);
-                  setTerminalOutput("Logged out. Sign in to use the terminal.");
-                  setTerminalError("");
-                }}
+                onClick={logoutFromApp}
               >
                 Log out
               </button>

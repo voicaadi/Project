@@ -15,3 +15,14 @@ dist/
 actions-runner/
 *.backup
 *.pre-api-fix
+agent/agent-token.txt
+
+agent/device-token.txt
+
+# Local backup files
+*.bak
+
+*.backup-*
+
+# Temporary credential files
+agent/device-token.tmp

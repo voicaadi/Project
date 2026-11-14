@@ -16,11 +16,23 @@ class DeviceConnectionManager:
         self.lock = asyncio.Lock()
 
     async def connect(self, device_id: int, websocket: WebSocket):
+        browser_sockets = []
+
         async with self.lock:
             previous = self.connections.get(device_id)
+
+            if previous is websocket:
+                return
+
             self.connections[device_id] = websocket
 
-        if previous and previous is not websocket:
+            session_ids = list(self.device_sessions.pop(device_id, set()))
+            for session_id in session_ids:
+                entry = self.sessions.pop(session_id, None)
+                if entry:
+                    browser_sockets.append(entry[1])
+
+        if previous:
             try:
                 await previous.close(
                     code=4001,
@@ -29,17 +41,67 @@ class DeviceConnectionManager:
             except Exception:
                 pass
 
+        for browser_socket in browser_sockets:
+            try:
+                await browser_socket.close(
+                    code=4001,
+                    reason="Device connection was replaced",
+                )
+            except Exception:
+                pass
+
     async def disconnect(self, device_id: int, websocket: WebSocket):
+        browser_sockets = []
+
         async with self.lock:
-            if self.connections.get(device_id) is websocket:
-                self.connections.pop(device_id, None)
+            if self.connections.get(device_id) is not websocket:
+                return
 
-                session_ids = list(self.device_sessions[device_id])
+            self.connections.pop(device_id, None)
 
-                for session_id in session_ids:
-                    self.sessions.pop(session_id, None)
+            session_ids = list(self.device_sessions.pop(device_id, set()))
+            for session_id in session_ids:
+                entry = self.sessions.pop(session_id, None)
+                if entry:
+                    browser_sockets.append(entry[1])
 
-                self.device_sessions.pop(device_id, None)
+        for browser_socket in browser_sockets:
+            try:
+                await browser_socket.close(
+                    code=4001,
+                    reason="Device disconnected",
+                )
+            except Exception:
+                pass
+
+    async def revoke(self, device_id: int):
+        async with self.lock:
+            device_socket = self.connections.pop(device_id, None)
+            session_ids = list(self.device_sessions.pop(device_id, set()))
+            browser_sockets = []
+
+            for session_id in session_ids:
+                entry = self.sessions.pop(session_id, None)
+                if entry:
+                    browser_sockets.append(entry[1])
+
+        if device_socket:
+            try:
+                await device_socket.close(
+                    code=4403,
+                    reason="Device access revoked",
+                )
+            except Exception:
+                pass
+
+        for browser_socket in browser_sockets:
+            try:
+                await browser_socket.close(
+                    code=4001,
+                    reason="Device access revoked",
+                )
+            except Exception:
+                pass
 
     async def get_connection(self, device_id: int):
         async with self.lock:
@@ -87,8 +149,12 @@ class DeviceConnectionManager:
         _, browser_socket = entry
         await browser_socket.send_json(message)
         return True
-    async def send_to_browser_for_device(self, device_id: int, message: dict):
-        
+    async def send_to_browser_for_device(
+        self,
+        device_id: int,
+        session_id: str,
+        message: dict,
+    ):
         async with self.lock:
             entry = self.sessions.get(session_id)
 
@@ -97,9 +163,21 @@ class DeviceConnectionManager:
 
         browser_socket = entry[1]
 
-        await browser_socket.send_json(message)
-        return True
+        try:
+            await browser_socket.send_json(message)
+            return True
+        except Exception:
+            await self.remove_session(session_id)
 
+            try:
+                await browser_socket.close(
+                    code=4001,
+                    reason="Browser terminal connection failed",
+                )
+            except Exception:
+                pass
+
+            return False
 
 device_connections = DeviceConnectionManager()
 

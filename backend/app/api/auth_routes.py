@@ -4,14 +4,14 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
-from app.database.models import User
+from app.database.models import User, RefreshSession
 from app.security.auth import (
     hash_password,
     verify_password,
@@ -27,6 +27,47 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 bearer_scheme = HTTPBearer()
 
 VERIFICATION_CODE_HOURS = 24
+
+
+REFRESH_TOKEN_DAYS = 30
+REFRESH_COOKIE_NAME = "adri_refresh"
+
+
+def create_refresh_session(user_id: int, db: Session) -> str:
+    token = secrets.token_urlsafe(48)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    session = RefreshSession(
+        user_id=user_id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS),
+    )
+    db.add(session)
+    db.commit()
+
+    return token
+
+
+def set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=REFRESH_TOKEN_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/api/auth",
+    )
+
+
+def clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path="/api/auth",
+        secure=True,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 class RegisterRequest(BaseModel):
@@ -243,20 +284,18 @@ def resend_verification(
 
 
 @router.post("/login")
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(
+    data: LoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     user = db.query(User).filter(User.email == data.email).first()
 
     if not user or not verify_password(data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect email or password",
-        )
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
 
     if not user.is_active:
-        raise HTTPException(
-            status_code=403,
-            detail="Account is disabled",
-        )
+        raise HTTPException(status_code=403, detail="Account is disabled")
 
     if not user.is_verified:
         raise HTTPException(
@@ -264,10 +303,12 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             detail="Please verify your email before logging in.",
         )
 
-    token = create_access_token(user.id)
+    access_token = create_access_token(user.id)
+    refresh_token = create_refresh_session(user.id, db)
+    set_refresh_cookie(response, refresh_token)
 
     return {
-        "access_token": token,
+        "access_token": access_token,
         "token_type": "bearer",
         "user": {
             "id": user.id,
@@ -275,6 +316,122 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             "username": user.username,
         },
     }
+
+
+
+@router.post("/refresh")
+def refresh_session(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    raw_token = request.cookies.get(REFRESH_COOKIE_NAME)
+
+    def unauthorized(clear_cookie=True):
+        if clear_cookie:
+            clear_refresh_cookie(response)
+        raise HTTPException(
+            status_code=401,
+            detail="Session expired. Please log in again.",
+        )
+
+    if not raw_token:
+        unauthorized()
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    try:
+        # Lock the session row to prevent concurrent token rotation.
+        session = (
+            db.query(RefreshSession)
+            .filter(RefreshSession.token_hash == token_hash)
+            .with_for_update()
+            .first()
+        )
+
+        if not session:
+            unauthorized()
+
+        if session.revoked_at is not None:
+            # Another request may already have rotated this token.
+            # Preserve the replacement cookie set by that request.
+            unauthorized(clear_cookie=False)
+
+        now = datetime.now(timezone.utc)
+        expires_at = session.expires_at
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        user = db.query(User).filter(User.id == session.user_id).first()
+
+        if (
+            expires_at <= now
+            or not user
+            or not user.is_active
+            or not user.is_verified
+        ):
+            session.revoked_at = now
+            db.commit()
+            unauthorized()
+
+        # Revoke the old token and create its replacement in one transaction.
+        new_refresh_token = secrets.token_urlsafe(48)
+        new_token_hash = hashlib.sha256(
+            new_refresh_token.encode("utf-8")
+        ).hexdigest()
+
+        session.revoked_at = now
+
+        db.add(
+            RefreshSession(
+                user_id=user.id,
+                token_hash=new_token_hash,
+                expires_at=now + timedelta(days=REFRESH_TOKEN_DAYS),
+            )
+        )
+
+        db.commit()
+        set_refresh_cookie(response, new_refresh_token)
+
+        return {
+            "access_token": create_access_token(user.id),
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "username": user.username,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+
+@router.post("/logout")
+def logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    raw_token = request.cookies.get(REFRESH_COOKIE_NAME)
+
+    if raw_token:
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        session = db.query(RefreshSession).filter(
+            RefreshSession.token_hash == token_hash
+        ).first()
+
+        if session and session.revoked_at is None:
+            session.revoked_at = datetime.now(timezone.utc)
+            db.commit()
+
+    clear_refresh_cookie(response)
+    return {"message": "Logged out successfully"}
 
 
 @router.get("/me")

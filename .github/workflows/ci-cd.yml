@@ -144,16 +144,21 @@ jobs:
             backend=ghcr.io/${{ github.repository_owner }}/devops-ai-backend:${{ github.sha }} \
             -n devops-ai
 
+      - name: Wait for backend rollout
+        run: |
+          kubectl rollout status deployment/devops-ai-backend \
+            -n devops-ai --timeout=180s
+
+      - name: Initialize production database tables
+        run: |
+          kubectl exec deployment/devops-ai-backend -n devops-ai -- \
+            python -m app.database.init_db
+
       - name: Deploy frontend
         run: |
           kubectl set image deployment/devops-ai-frontend \
             frontend=ghcr.io/${{ github.repository_owner }}/devops-ai-frontend:${{ github.sha }} \
             -n devops-ai
-
-      - name: Wait for backend rollout
-        run: |
-          kubectl rollout status deployment/devops-ai-backend \
-            -n devops-ai --timeout=180s
 
       - name: Wait for frontend rollout
         run: |
