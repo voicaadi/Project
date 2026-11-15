@@ -1,3 +1,4 @@
+import asyncio
 
 import pytest
 from unittest.mock import AsyncMock
@@ -206,3 +207,160 @@ async def test_failed_browser_send_removes_session_but_keeps_device_connected():
     assert "failed-session" not in manager.sessions
     assert await manager.is_connected(1)
     browser_socket.close.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_workspace_request_receives_matching_response():
+    manager = DeviceConnectionManager()
+    device_socket = AsyncMock()
+    await manager.connect(1, device_socket)
+
+    task = asyncio.create_task(
+        manager.request_workspace(
+            1,
+            {"type": "workspace.request", "request_id": "req-1"},
+        )
+    )
+    await asyncio.sleep(0)
+
+    resolved = await manager.resolve_workspace_response(
+        1,
+        {
+            "request_id": "req-1",
+            "success": True,
+            "result": {"status": "running"},
+        },
+    )
+
+    assert resolved is True
+    assert await task == {"status": "running"}
+    assert "req-1" not in manager.pending_requests
+
+
+@pytest.mark.anyio
+async def test_workspace_response_from_wrong_device_is_rejected():
+    manager = DeviceConnectionManager()
+    await manager.connect(1, AsyncMock())
+
+    task = asyncio.create_task(
+        manager.request_workspace(
+            1,
+            {"type": "workspace.request", "request_id": "req-2"},
+        )
+    )
+    await asyncio.sleep(0)
+
+    resolved = await manager.resolve_workspace_response(
+        2,
+        {"request_id": "req-2", "success": True, "result": "wrong"},
+    )
+
+    assert resolved is False
+
+    resolved = await manager.resolve_workspace_response(
+        1,
+        {"request_id": "req-2", "success": True, "result": "correct"},
+    )
+
+    assert resolved is True
+    assert await task == "correct"
+
+
+@pytest.mark.anyio
+async def test_device_disconnect_fails_pending_workspace_request():
+    manager = DeviceConnectionManager()
+    device_socket = AsyncMock()
+    await manager.connect(1, device_socket)
+
+    task = asyncio.create_task(
+        manager.request_workspace(
+            1,
+            {"type": "workspace.request", "request_id": "req-3"},
+        )
+    )
+    await asyncio.sleep(0)
+
+    await manager.disconnect(1, device_socket)
+
+    with pytest.raises(RuntimeError, match="Device disconnected"):
+        await task
+
+    assert "req-3" not in manager.pending_requests
+
+
+@pytest.mark.anyio
+async def test_workspace_request_timeout_cleans_pending_request():
+    manager = DeviceConnectionManager()
+    await manager.connect(1, AsyncMock())
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        await manager.request_workspace(
+            1,
+            {"type": "workspace.request", "request_id": "req-4"},
+            timeout=0.01,
+        )
+
+    assert "req-4" not in manager.pending_requests
+
+
+@pytest.mark.anyio
+async def test_agent_workspace_error_reaches_request_caller():
+    manager = DeviceConnectionManager()
+    await manager.connect(1, AsyncMock())
+
+    task = asyncio.create_task(
+        manager.request_workspace(
+            1,
+            {"type": "workspace.request", "request_id": "req-5"},
+        )
+    )
+    await asyncio.sleep(0)
+
+    resolved = await manager.resolve_workspace_response(
+        1,
+        {
+            "request_id": "req-5",
+            "success": False,
+            "error": "Workspace container not found",
+        },
+    )
+
+    assert resolved is True
+    with pytest.raises(RuntimeError, match="Workspace container not found"):
+        await task
+
+
+@pytest.mark.anyio
+async def test_raw_terminal_output_reaches_correct_browser():
+    manager = DeviceConnectionManager()
+    browser_socket = AsyncMock()
+
+    await manager.connect(1, AsyncMock())
+    await manager.register_session("raw-session", 1, browser_socket)
+
+    result = await manager.send_text_to_browser_for_device(
+        1,
+        "raw-session",
+        "Hello from Docker",
+    )
+
+    assert result is True
+    browser_socket.send_text.assert_awaited_once_with("Hello from Docker")
+
+
+@pytest.mark.anyio
+async def test_raw_terminal_output_rejects_wrong_device():
+    manager = DeviceConnectionManager()
+    browser_socket = AsyncMock()
+
+    await manager.connect(1, AsyncMock())
+    await manager.register_session("raw-session", 1, browser_socket)
+
+    result = await manager.send_text_to_browser_for_device(
+        2,
+        "raw-session",
+        "unauthorized output",
+    )
+
+    assert result is False
+    browser_socket.send_text.assert_not_awaited()

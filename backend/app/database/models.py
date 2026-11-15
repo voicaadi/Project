@@ -51,12 +51,21 @@ class Workspace(Base):
 
     status = Column(String(30), default="stopped", nullable=False)
 
+    device_id = Column(
+        Integer,
+        ForeignKey("user_devices.id", ondelete="SET NULL", name="fk_workspaces_device_id_user_devices"),
+        nullable=True,
+        index=True,
+    )
+
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
 
     owner = relationship("User", back_populates="workspaces")
+    device = relationship("UserDevice", back_populates="workspaces")
+
 
 class UserDevice(Base):
     __tablename__ = "user_devices"
@@ -77,6 +86,7 @@ class UserDevice(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     owner = relationship("User", backref="devices")
+    workspaces = relationship("Workspace", back_populates="device")
 
 
 class DevicePairing(Base):

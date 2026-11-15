@@ -61,6 +61,12 @@ function App() {
   const [verificationStep, setVerificationStep] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
   const [workspaceId, setWorkspaceId] = useState("1");
+  const [workspaces, setWorkspaces] = useState([]);
+  const [workspacesLoading, setWorkspacesLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [workspaceAction, setWorkspaceAction] = useState("");
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [terminalCommand, setTerminalCommand] = useState("");
   const [terminalOutput, setTerminalOutput] = useState("Log in, then enter a Linux command.");
   const [terminalLoading, setTerminalLoading] = useState(false);
@@ -300,6 +306,152 @@ function App() {
     }
   }
 
+  async function loadWorkspaces() {
+    if (!accessToken) {
+      setWorkspaces([]);
+      return;
+    }
+
+    setWorkspacesLoading(true);
+    setWorkspaceError("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/workspaces/`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not load workspaces.");
+      }
+
+      setWorkspaces(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setWorkspaceError(error.message || "Could not load workspaces.");
+    } finally {
+      setWorkspacesLoading(false);
+    }
+  }
+
+  async function createWorkspace(e) {
+    e.preventDefault();
+    const name = workspaceName.trim();
+
+    if (name.length < 3) {
+      setWorkspaceError("Workspace name must contain at least 3 characters.");
+      return;
+    }
+
+    setWorkspaceAction("create");
+    setWorkspaceError("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/workspaces/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not create workspace.");
+      }
+
+      setWorkspaceName("");
+      await loadWorkspaces();
+      if (data.workspace?.id) {
+        setWorkspaceId(String(data.workspace.id));
+      }
+    } catch (error) {
+      setWorkspaceError(error.message || "Could not create workspace.");
+    } finally {
+      setWorkspaceAction("");
+    }
+  }
+
+  async function assignWorkspaceDevice(id) {
+    if (!selectedDeviceId) {
+      setWorkspaceError("Select a connected device first.");
+      return;
+    }
+
+    setWorkspaceAction(`assign-${id}`);
+    setWorkspaceError("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/workspaces/${id}/device`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ device_id: Number(selectedDeviceId) }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not assign device.");
+      }
+
+      setWorkspaceError("");
+    } catch (error) {
+      setWorkspaceError(error.message || "Could not assign device.");
+    } finally {
+      setWorkspaceAction("");
+    }
+  }
+
+  async function controlWorkspace(id, operation) {
+    setWorkspaceAction(`${operation}-${id}`);
+    setWorkspaceError("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/workspaces/${id}/${operation}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || `Could not ${operation} workspace.`);
+      }
+
+      await loadWorkspaces();
+    } catch (error) {
+      setWorkspaceError(error.message || `Could not ${operation} workspace.`);
+    } finally {
+      setWorkspaceAction("");
+    }
+  }
+
+  async function refreshWorkspaceStatus(id) {
+    setWorkspaceAction(`status-${id}`);
+    setWorkspaceError("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/workspaces/${id}/status`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not refresh workspace status.");
+      }
+
+      await loadWorkspaces();
+    } catch (error) {
+      setWorkspaceError(error.message || "Could not refresh workspace status.");
+    } finally {
+      setWorkspaceAction("");
+    }
+  }
+
   async function revokeDevice(deviceId) {
     if (!window.confirm("Revoke this device's access to ADRI AI?")) {
       return;
@@ -332,10 +484,12 @@ function App() {
   useEffect(() => {
     if (!accessToken) {
       setDevices([]);
+      setWorkspaces([]);
       return;
     }
 
     loadDevices();
+    loadWorkspaces();
   }, [accessToken]);
 
 
@@ -905,7 +1059,7 @@ async function resendVerificationEmail() {
           <a className="nav-item" href="#terminal">
             <Terminal size={18} /> Terminal
           </a>
-          <a className="nav-item" href="#workspace">
+          <a className="nav-item" href="#terminal">
             <FolderOpen size={18} /> Workspace
           </a>
           <a className="nav-item" href="#settings">
@@ -1179,6 +1333,158 @@ async function resendVerificationEmail() {
           <div className="panel-footer">
             <span>Device registration</span>
             <span>Secure pairing</span>
+          </div>
+        </section>
+
+        <section className="panel workspace-panel" id="workspace">
+          <div className="panel-header">
+            <div className="panel-title">
+              <div className="panel-icon"><FolderOpen size={19} /></div>
+              <div>
+                <h3>Workspace Manager</h3>
+                <p>Create and manage your Ubuntu Docker workspaces</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="refresh-button"
+              onClick={loadWorkspaces}
+              disabled={workspacesLoading || !accessToken}
+            >
+              <RefreshCw size={15} className={workspacesLoading ? "spin" : ""} />
+              Refresh
+            </button>
+          </div>
+
+          <form onSubmit={createWorkspace} className="workspace-create-form">
+            <input
+              type="text"
+              value={workspaceName}
+              onChange={(e) => setWorkspaceName(e.target.value)}
+              placeholder="Workspace name (minimum 3 characters)"
+              minLength={3}
+              maxLength={100}
+              required
+              disabled={!accessToken || workspaceAction === "create"}
+            />
+            <button
+              type="submit"
+              className="terminal-run-button"
+              disabled={!accessToken || workspaceAction === "create"}
+            >
+              {workspaceAction === "create" ? "Creating..." : "Create Workspace"}
+            </button>
+          </form>
+
+          {workspaceError && (
+            <div className="docker-message docker-error" role="alert">
+              <CircleAlert size={18} />
+              <p>{workspaceError}</p>
+            </div>
+          )}
+
+          {!accessToken ? (
+            <div className="docker-message empty-state">
+              <ShieldCheck size={22} />
+              <p>Sign in to manage your workspaces.</p>
+            </div>
+          ) : workspacesLoading && workspaces.length === 0 ? (
+            <div className="docker-message">
+              <LoaderCircle size={19} className="spin" />
+              <span>Loading workspaces...</span>
+            </div>
+          ) : workspaces.length === 0 ? (
+            <div className="docker-message empty-state">
+              <FolderOpen size={22} />
+              <div>
+                <strong>No workspaces yet</strong>
+                <p>Create a workspace to get started.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="container-list">
+              {workspaces.map((workspace) => (
+                <article className="container-row" key={workspace.id}>
+                  <div className="container-symbol">
+                    <FolderOpen size={19} />
+                  </div>
+                  <div className="container-main">
+                    <strong>{workspace.name}</strong>
+                    <small>Workspace ID: {workspace.id}</small>
+                    <small>Ubuntu Docker environment</small>
+                  </div>
+                  <div className="container-meta">
+                    <span className={`container-status ${
+                      workspace.status === "running" ? "running" : "stopped"
+                    }`}>
+                      <span />
+                      {workspace.status || "unknown"}
+                    </span>
+                    <button
+                      type="button"
+                      className="refresh-button"
+                      onClick={() => {
+                        setWorkspaceId(String(workspace.id));
+                        refreshWorkspaceStatus(workspace.id);
+                      }}
+                      disabled={Boolean(workspaceAction)}
+                    >
+                      <RefreshCw size={13} />
+                      Status
+                    </button>
+                  </div>
+
+                  <div className="workspace-controls">
+                    <select
+                      value={selectedDeviceId}
+                      onChange={(e) => setSelectedDeviceId(e.target.value)}
+                      disabled={Boolean(workspaceAction)}
+                    >
+                      <option value="">Select connected device</option>
+                      {devices
+                        .filter((device) => device.is_active && device.is_connected)
+                        .map((device) => (
+                          <option key={device.id} value={device.id}>
+                            {device.device_name}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="refresh-button"
+                      onClick={() => assignWorkspaceDevice(workspace.id)}
+                      disabled={!selectedDeviceId || Boolean(workspaceAction)}
+                    >
+                      {workspaceAction === `assign-${workspace.id}` ? "Assigning..." : "Assign Device"}
+                    </button>
+                    <button
+                      type="button"
+                      className="terminal-run-button"
+                      onClick={() => {
+                        setWorkspaceId(String(workspace.id));
+                        controlWorkspace(workspace.id, "start");
+                      }}
+                      disabled={Boolean(workspaceAction) || workspace.status === "running"}
+                    >
+                      {workspaceAction === `start-${workspace.id}` ? "Starting..." : "Start"}
+                    </button>
+                    <button
+                      type="button"
+                      className="refresh-button"
+                      onClick={() => controlWorkspace(workspace.id, "stop")}
+                      disabled={Boolean(workspaceAction) || workspace.status !== "running"}
+                    >
+                      {workspaceAction === `stop-${workspace.id}` ? "Stopping..." : "Stop"}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+
+          <div className="panel-footer">
+            <span>{workspaces.length} workspace{workspaces.length === 1 ? "" : "s"}</span>
+            <span>Managed through your connected local agent</span>
           </div>
         </section>
 

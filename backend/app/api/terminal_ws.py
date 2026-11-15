@@ -1,14 +1,16 @@
-import asyncio
+import logging
+from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
-from app.database.models import User, Workspace
+from app.database.models import User, UserDevice, Workspace
 from app.security.auth import decode_access_token
-from app.services.workspace_service import get_docker_client
+from app.services.device_connection import device_connections
 
 router = APIRouter(tags=["Terminal"])
+logger = logging.getLogger(__name__)
 
 
 @router.websocket("/api/workspaces/{workspace_id}/terminal/ws")
@@ -16,14 +18,13 @@ async def terminal_websocket(websocket: WebSocket, workspace_id: int):
     await websocket.accept()
 
     db: Session = SessionLocal()
-    docker_socket = None
-    input_task = None
-    output_task = None
+    device_id = None
+    session_id = None
 
     try:
-        # First WebSocket message must contain the JWT.
+        # The first browser message must contain the JWT.
         auth_data = await websocket.receive_json()
-        token = auth_data.get("token")
+        token = auth_data.get("token") if isinstance(auth_data, dict) else None
 
         if not token:
             await websocket.close(code=4401)
@@ -36,7 +37,6 @@ async def terminal_websocket(websocket: WebSocket, workspace_id: int):
             await websocket.close(code=4401)
             return
 
-        # Verify user and workspace ownership.
         user = db.query(User).filter(
             User.id == user_id,
             User.is_active.is_(True),
@@ -51,119 +51,111 @@ async def terminal_websocket(websocket: WebSocket, workspace_id: int):
             await websocket.close(code=4403)
             return
 
-        client = get_docker_client()
-
-        container_name = (
-            f"devops-user-{user_id}-workspace-{workspace_id}"
-        )
-
-        container = client.containers.get(container_name)
-        container.reload()
-
-        if container.status != "running":
-            await websocket.close(code=4409)
+        if not workspace.device_id:
+            await websocket.close(code=4409, reason="Workspace has no assigned device")
             return
 
-        # Create a persistent interactive Bash session with a PTY.
-        exec_data = client.api.exec_create(
-            container.id,
-            cmd=["/bin/bash", "--login"],
-            stdin=True,
-            stdout=True,
-            stderr=True,
-            tty=True,
-            user="devops",
-            workdir="/home/devops/workspace",
+        device = db.query(UserDevice).filter(
+            UserDevice.id == workspace.device_id,
+            UserDevice.user_id == user_id,
+            UserDevice.is_active.is_(True),
+        ).first()
+
+        if not device:
+            await websocket.close(code=4409, reason="Assigned device is unavailable")
+            return
+
+        device_id = device.id
+
+        if not await device_connections.is_connected(device_id):
+            await websocket.close(code=4409, reason="Local agent is offline")
+            return
+
+        session_id = str(uuid4())
+
+        await device_connections.register_session(
+            session_id,
+            device_id,
+            websocket,
         )
 
-        docker_socket = client.api.exec_start(
-            exec_data["Id"],
-            detach=False,
-            tty=True,
-            socket=True,
+        await device_connections.send_to_device(
+            device_id,
+            {
+                "type": "workspace.terminal.open",
+                "session_id": session_id,
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+                "rows": 30,
+                "cols": 100,
+            },
         )
 
-        raw_socket = getattr(docker_socket, "_sock", docker_socket)
+        # Preserve the existing browser protocol:
+        # raw text for input, NUL + RESIZE:columns:rows for resize.
+        while True:
+            message = await websocket.receive_text()
 
-        async def send_to_container():
-            while True:
-                message = await websocket.receive_text()
-
-                # Terminal resize message: NUL + RESIZE:columns:rows
-                if message.startswith("\x00RESIZE:"):
-                    _, cols, rows = message.split(":", 2)
-
-                    await asyncio.to_thread(
-                        client.api.exec_resize,
-                        exec_data["Id"],
-                        height=int(rows),
-                        width=int(cols),
-                    )
+            if message.startswith("\x00RESIZE:"):
+                try:
+                    _, cols_text, rows_text = message.split(":", 2)
+                    cols = int(cols_text)
+                    rows = int(rows_text)
+                except (ValueError, TypeError):
                     continue
 
-                # Forward keyboard input to the container PTY.
-                await asyncio.to_thread(
-                    raw_socket.sendall,
-                    message.encode("utf-8"),
+                if not (5 <= rows <= 100 and 20 <= cols <= 300):
+                    continue
+
+                await device_connections.send_to_device(
+                    device_id,
+                    {
+                        "type": "workspace.terminal.resize",
+                        "session_id": session_id,
+                        "rows": rows,
+                        "cols": cols,
+                    },
                 )
+                continue
 
-        async def receive_from_container():
-            while True:
-                output = await asyncio.to_thread(
-                    raw_socket.recv, 4096
-                )
-
-                if not output:
-                    break
-
-                await websocket.send_text(
-                    output.decode("utf-8", errors="replace")
-                )
-
-        input_task = asyncio.create_task(send_to_container())
-        output_task = asyncio.create_task(receive_from_container())
-
-        done, pending = await asyncio.wait(
-            [input_task, output_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        for task in pending:
-            task.cancel()
-
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-
-        # Surface an exception from the task that completed.
-        for task in done:
-            task.result()
+            await device_connections.send_to_device(
+                device_id,
+                {
+                    "type": "workspace.terminal.input",
+                    "session_id": session_id,
+                    "data": message,
+                },
+            )
 
     except WebSocketDisconnect:
         pass
 
-    except Exception as error:
-        print("TERMINAL WEBSOCKET ERROR:", repr(error))
-
+    except Exception:
+        logger.exception(
+            "Workspace terminal WebSocket failed (workspace_id=%s, device_id=%s)",
+            workspace_id,
+            device_id,
+        )
         try:
             await websocket.close(code=1011)
         except Exception:
             pass
 
     finally:
-        for task in (input_task, output_task):
-            if task and not task.done():
-                task.cancel()
+        if session_id is not None:
+            if device_id is not None:
+                try:
+                    if await device_connections.is_connected(device_id):
+                        await device_connections.send_to_device(
+                            device_id,
+                            {
+                                "type": "workspace.terminal.close",
+                                "session_id": session_id,
+                            },
+                        )
+                except Exception:
+                    logger.warning("Could not send Docker terminal close request.")
 
-        if input_task or output_task:
-            await asyncio.gather(
-                *(task for task in (input_task, output_task) if task),
-                return_exceptions=True,
-            )
-
-        if docker_socket:
-            try:
-                docker_socket.close()
-            except Exception:
-                pass
+            await device_connections.remove_session(session_id)
 
         db.close()

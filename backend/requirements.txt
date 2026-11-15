@@ -24,3 +24,5 @@ PyJWT
 pwdlib[argon2]
 email-validator
 slowapi
+
+alembic==1.20.1

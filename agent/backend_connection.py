@@ -9,8 +9,80 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from backend_terminal import BackendTerminalManager
+from docker_workspace import DockerWorkspaceManager
+from docker_terminal import DockerTerminalManager
 
 logger = logging.getLogger("adri.backend_connection")
+
+
+async def handle_workspace_request(
+    message: dict,
+    docker_manager: DockerWorkspaceManager,
+    send_message,
+):
+    request_id = message.get("request_id")
+    operation = message.get("operation")
+    user_id = message.get("user_id")
+    workspace_id = message.get("workspace_id")
+
+    response = {
+        "type": "workspace.response",
+        "request_id": request_id,
+        "success": False,
+    }
+
+    try:
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 64:
+            raise ValueError("Invalid request ID")
+
+        if type(user_id) is not int or user_id < 1:
+            raise ValueError("Invalid user ID")
+
+        if type(workspace_id) is not int or workspace_id < 1:
+            raise ValueError("Invalid workspace ID")
+
+        operations = {
+            "start": docker_manager.start,
+            "stop": docker_manager.stop,
+            "status": docker_manager.status,
+        }
+
+        if operation in operations:
+            result = await asyncio.to_thread(
+                operations[operation],
+                user_id,
+                workspace_id,
+            )
+
+        elif operation == "execute":
+            command = message.get("command")
+
+            if not isinstance(command, str) or not 1 <= len(command) <= 1000:
+                raise ValueError("Invalid command")
+
+            result = await asyncio.to_thread(
+                docker_manager.execute,
+                user_id,
+                workspace_id,
+                command,
+            )
+
+        else:
+            raise ValueError("Unsupported workspace operation")
+
+        response["success"] = True
+        response["result"] = result
+
+    except Exception as exc:
+        logger.warning(
+            "Workspace request failed (operation=%s, request_id=%s): %s",
+            operation,
+            request_id,
+            exc,
+        )
+        response["error"] = str(exc)[:500]
+
+    await send_message(response)
 
 
 async def run_backend_connection(
@@ -67,6 +139,11 @@ async def run_backend_connection(
                         await websocket.send(json.dumps(message))
 
                 manager = BackendTerminalManager(send_message)
+                docker_manager = DockerWorkspaceManager()
+                docker_terminal_manager = DockerTerminalManager(
+                    docker_manager,
+                    send_message,
+                )
 
                 async def heartbeat():
                     while True:
@@ -100,7 +177,70 @@ async def run_backend_connection(
                         if message_type == "heartbeat_ack":
                             continue
 
-                        if message_type == "terminal.open":
+                        if message_type == "workspace.terminal.open":
+                            try:
+                                await docker_terminal_manager.open(
+                                    session_id,
+                                    message.get("user_id"),
+                                    message.get("workspace_id"),
+                                    message.get("rows", 30),
+                                    message.get("cols", 100),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Could not open Docker terminal session."
+                                )
+                                await send_message({
+                                    "type": "workspace.terminal.closed",
+                                    "session_id": session_id,
+                                })
+
+                        elif message_type == "workspace.terminal.input":
+                            try:
+                                await docker_terminal_manager.input(
+                                    session_id,
+                                    message.get("data"),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Could not process Docker terminal input."
+                                )
+                                await docker_terminal_manager.close(session_id)
+                                await send_message({
+                                    "type": "workspace.terminal.closed",
+                                    "session_id": session_id,
+                                })
+
+                        elif message_type == "workspace.terminal.resize":
+                            try:
+                                await docker_terminal_manager.resize(
+                                    session_id,
+                                    message.get("rows", 30),
+                                    message.get("cols", 100),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Could not resize Docker terminal session."
+                                )
+                                await docker_terminal_manager.close(session_id)
+                                await send_message({
+                                    "type": "workspace.terminal.closed",
+                                    "session_id": session_id,
+                                })
+
+                        elif message_type == "workspace.terminal.close":
+                            await docker_terminal_manager.close(session_id)
+
+                            continue
+
+                        if message_type == "workspace.request":
+                            await handle_workspace_request(
+                                message,
+                                docker_manager,
+                                send_message,
+                            )
+
+                        elif message_type == "terminal.open":
                             if isinstance(session_id, str):
                                 try:
                                     await manager.open(session_id)
@@ -162,6 +302,8 @@ async def run_backend_connection(
                         return_exceptions=True,
                     )
                     await manager.close_all()
+                    await docker_terminal_manager.close_all()
+                    await asyncio.to_thread(docker_manager.close)
 
         except asyncio.CancelledError:
             raise

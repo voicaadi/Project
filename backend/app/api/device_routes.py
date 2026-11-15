@@ -266,6 +266,34 @@ async def agent_connect(websocket: WebSocket):
                     )
                     await device_connections.remove_session(session_id)
 
+            elif message_type == "workspace.terminal.output":
+                session_id = message.get("session_id")
+                data = message.get("data", "")
+
+                if isinstance(session_id, str) and isinstance(data, str):
+                    await device_connections.send_text_to_browser_for_device(
+                        device_id,
+                        session_id,
+                        data,
+                    )
+
+            elif message_type == "workspace.terminal.closed":
+                session_id = message.get("session_id")
+
+                if isinstance(session_id, str):
+                    await device_connections.send_text_to_browser_for_device(
+                        device_id,
+                        session_id,
+                        "\r\n[Docker terminal closed]\r\n",
+                    )
+                    await device_connections.remove_session(session_id)
+
+            elif message_type == "workspace.response":
+                await device_connections.resolve_workspace_response(
+                    device_id,
+                    message,
+                )
+
     except asyncio.TimeoutError:
         await websocket.close(code=4401)
 
