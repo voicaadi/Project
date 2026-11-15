@@ -1427,62 +1427,67 @@ async function resendVerificationEmail() {
                       <span />
                       {workspace.status || "unknown"}
                     </span>
-                    <button
-                      type="button"
-                      className="refresh-button"
-                      onClick={() => {
-                        setWorkspaceId(String(workspace.id));
-                        refreshWorkspaceStatus(workspace.id);
-                      }}
-                      disabled={Boolean(workspaceAction)}
-                    >
-                      <RefreshCw size={13} />
-                      Status
-                    </button>
                   </div>
 
                   <div className="workspace-controls">
-                    <select
-                      value={selectedDeviceId}
-                      onChange={(e) => setSelectedDeviceId(e.target.value)}
-                      disabled={Boolean(workspaceAction)}
-                    >
-                      <option value="">Select connected device</option>
-                      {devices
-                        .filter((device) => device.is_active && device.is_connected)
-                        .map((device) => (
-                          <option key={device.id} value={device.id}>
-                            {device.device_name}
-                          </option>
-                        ))}
-                    </select>
-                    <button
-                      type="button"
-                      className="refresh-button"
-                      onClick={() => assignWorkspaceDevice(workspace.id)}
-                      disabled={!selectedDeviceId || Boolean(workspaceAction)}
-                    >
-                      {workspaceAction === `assign-${workspace.id}` ? "Assigning..." : "Assign Device"}
-                    </button>
-                    <button
-                      type="button"
-                      className="terminal-run-button"
-                      onClick={() => {
-                        setWorkspaceId(String(workspace.id));
-                        controlWorkspace(workspace.id, "start");
-                      }}
-                      disabled={Boolean(workspaceAction) || workspace.status === "running"}
-                    >
-                      {workspaceAction === `start-${workspace.id}` ? "Starting..." : "Start"}
-                    </button>
-                    <button
-                      type="button"
-                      className="refresh-button"
-                      onClick={() => controlWorkspace(workspace.id, "stop")}
-                      disabled={Boolean(workspaceAction) || workspace.status !== "running"}
-                    >
-                      {workspaceAction === `stop-${workspace.id}` ? "Stopping..." : "Stop"}
-                    </button>
+                    <div className="workspace-device-controls">
+                      <select
+                        value={selectedDeviceId}
+                        onChange={(e) => setSelectedDeviceId(e.target.value)}
+                        disabled={Boolean(workspaceAction)}
+                      >
+                        <option value="">Select connected device</option>
+                        {devices
+                          .filter((device) => device.is_active && device.is_connected)
+                          .map((device) => (
+                            <option key={device.id} value={device.id}>
+                              {device.device_name}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="refresh-button"
+                        onClick={() => assignWorkspaceDevice(workspace.id)}
+                        disabled={!selectedDeviceId || Boolean(workspaceAction)}
+                      >
+                        {workspaceAction === `assign-${workspace.id}` ? "Assigning..." : "Assign Device"}
+                      </button>
+                    </div>
+
+                    <div className="workspace-button-row">
+                      <button
+                        type="button"
+                        className="refresh-button"
+                        onClick={() => {
+                          setWorkspaceId(String(workspace.id));
+                          refreshWorkspaceStatus(workspace.id);
+                        }}
+                        disabled={Boolean(workspaceAction)}
+                      >
+                        <RefreshCw size={13} />
+                        Status
+                      </button>
+                      <button
+                        type="button"
+                        className="terminal-run-button"
+                        onClick={() => {
+                          setWorkspaceId(String(workspace.id));
+                          controlWorkspace(workspace.id, "start");
+                        }}
+                        disabled={Boolean(workspaceAction) || workspace.status === "running"}
+                      >
+                        {workspaceAction === `start-${workspace.id}` ? "Starting..." : "Start"}
+                      </button>
+                      <button
+                        type="button"
+                        className="refresh-button"
+                        onClick={() => controlWorkspace(workspace.id, "stop")}
+                        disabled={Boolean(workspaceAction) || workspace.status !== "running"}
+                      >
+                        {workspaceAction === `stop-${workspace.id}` ? "Stopping..." : "Stop"}
+                      </button>
+                    </div>
                   </div>
                 </article>
               ))}
