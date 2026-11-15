@@ -151,6 +151,8 @@ jobs:
     name: Deploy to Local Kubernetes
     runs-on: [self-hosted, Linux, X64, adri-wsl]
     needs: [publish-images]
+    environment:
+      name: production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
