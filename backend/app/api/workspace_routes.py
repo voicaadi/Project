@@ -79,6 +79,20 @@ async def request_agent_workspace(
             detail=str(exc),
         ) from exc
 
+@router.get("/{workspace_id}/docker")
+async def workspace_docker_overview(
+    workspace_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    workspace = get_owned_workspace(workspace_id, current_user, db)
+
+    return await request_agent_workspace(
+        workspace,
+        current_user,
+        db,
+        "docker_overview",
+    )
 
 @router.post("/")
 def create_workspace(

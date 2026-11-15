@@ -138,26 +138,44 @@ function App() {
       .catch(() => setBackend("Offline"));
   }, []);
   async function loadContainers() {
+    if (!accessToken || !workspaceId) return;
+
     setDockerLoading(true);
     setDockerError("");
+
     try {
-      const response = await fetch(`${API_URL}/api/docker/containers`);
+      const response = await fetch(
+        `${API_URL}/api/workspaces/${workspaceId}/docker`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
       if (!response.ok) {
-        throw new Error(`Docker request failed (${response.status})`);
+        const data = await response.json().catch(() => ({}));
+        throw new Error(
+          data.detail || `Docker request failed (${response.status})`
+        );
       }
+
       const data = await response.json();
+
       setContainers(data.containers || []);
-      setDockerOnline(true);
+      setDockerOnline(data.online === true);
     } catch (error) {
       setDockerOnline(false);
-      setDockerError(error.message || "Could not load Docker containers");
+      setDockerError(error.message || "Could not connect to Docker");
     } finally {
       setDockerLoading(false);
     }
   }
   useEffect(() => {
-    loadContainers();
-  }, []);
+    if (accessToken && workspaceId) {
+      loadContainers();
+    }
+  }, [accessToken, workspaceId]);
   async function sendMessage(e) {
     e.preventDefault();
     const userMessage = message.trim();

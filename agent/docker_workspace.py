@@ -147,5 +147,33 @@ class DockerWorkspaceManager:
             "stderr": stderr.decode("utf-8", errors="replace")[-10000:] if stderr else "",
         }
 
+    def overview(self):
+        self.client.ping()
+
+        info = self.client.info()
+        containers = self.client.containers.list(all=True)
+
+        return {
+            "online": True,
+            "engine": {
+                "name": info.get("Name", "Docker Engine"),
+                "version": info.get("ServerVersion", "Unknown"),
+            },
+            "containers": [
+                {
+                    "id": container.short_id,
+                    "name": container.name,
+                    "image": (
+                        container.image.tags[0]
+                        if container.image.tags
+                        else "Unknown"
+                    ),
+                    "status": container.status,
+                    "ports": container.ports,
+                }
+                for container in containers
+            ],
+        }
+
     def close(self):
         self.client.close()

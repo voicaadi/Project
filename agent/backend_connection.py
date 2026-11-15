@@ -47,7 +47,10 @@ async def handle_workspace_request(
             "status": docker_manager.status,
         }
 
-        if operation in operations:
+        if operation == "docker_overview":
+            result = await asyncio.to_thread(docker_manager.overview)
+
+        elif operation in operations:
             result = await asyncio.to_thread(
                 operations[operation],
                 user_id,
