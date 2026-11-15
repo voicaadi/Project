@@ -77,19 +77,19 @@ class DockerTerminalManager:
 
             exec_id = exec_data["Id"]
 
-            await asyncio.to_thread(
-                self.docker_manager.client.api.exec_resize,
-                exec_id,
-                height=rows,
-                width=cols,
-            )
-
             docker_socket = await asyncio.to_thread(
                 self.docker_manager.client.api.exec_start,
                 exec_id,
                 detach=False,
                 tty=True,
                 socket=True,
+            )
+
+            await asyncio.to_thread(
+                self.docker_manager.client.api.exec_resize,
+                exec_id,
+                height=rows,
+                width=cols,
             )
 
             session = DockerTerminalSession(
@@ -112,7 +112,7 @@ class DockerTerminalManager:
         try:
             while not session.closing:
                 data = await asyncio.to_thread(
-                    session.socket.recv,
+                    session.socket._sock.recv,
                     4096,
                 )
 
@@ -169,7 +169,7 @@ class DockerTerminalManager:
             return
 
         await asyncio.to_thread(
-            session.socket.sendall,
+            session.socket._sock.sendall,
             data.encode("utf-8"),
         )
 

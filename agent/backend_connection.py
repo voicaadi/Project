@@ -186,6 +186,10 @@ async def run_backend_connection(
                                     message.get("rows", 30),
                                     message.get("cols", 100),
                                 )
+                                await send_message({
+                                    "type": "workspace.terminal.ready",
+                                    "session_id": session_id,
+                                })
                             except Exception:
                                 logger.exception(
                                     "Could not open Docker terminal session."

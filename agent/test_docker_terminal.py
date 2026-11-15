@@ -67,7 +67,7 @@ class TestDockerTerminalManager(unittest.IsolatedAsyncioTestCase):
 
         await self.manager.input("session-3", "echo ADRI\n")
 
-        self.socket.sendall.assert_called_once_with(b"echo ADRI\n")
+        self.socket._sock.sendall.assert_called_once_with(b"echo ADRI\n")
 
     async def test_resize_uses_bounded_dimensions(self):
         session = DockerTerminalSession(

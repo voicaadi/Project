@@ -713,11 +713,18 @@ async function resendVerificationEmail() {
       socket.onopen = () => {
         if (cancelled) return;
         socket.send(JSON.stringify({ token: accessToken }));
-        setTerminalConnection("Connected");
-        xtermRef.current?.focus();
+        setTerminalConnection("Connecting");
       };
       socket.onmessage = (event) => {
         if (cancelled) return;
+
+        if (event.data === "\\x00READY") {
+          setTerminalConnection("Connected");
+          setTerminalError("");
+          xtermRef.current?.focus();
+          return;
+        }
+
         xtermRef.current?.write(event.data);
       };
       socket.onerror = () => {

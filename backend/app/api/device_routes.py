@@ -266,6 +266,15 @@ async def agent_connect(websocket: WebSocket):
                     )
                     await device_connections.remove_session(session_id)
 
+            elif message_type == "workspace.terminal.ready":
+                session_id = message.get("session_id")
+                if isinstance(session_id, str):
+                    await device_connections.send_text_to_browser_for_device(
+                        device_id,
+                        session_id,
+                        "\\x00READY",
+                    )
+
             elif message_type == "workspace.terminal.output":
                 session_id = message.get("session_id")
                 data = message.get("data", "")
