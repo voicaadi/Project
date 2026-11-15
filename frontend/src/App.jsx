@@ -343,7 +343,20 @@ function App() {
         throw new Error(data.detail || "Could not load workspaces.");
       }
 
-      setWorkspaces(Array.isArray(data) ? data : []);
+      const loadedWorkspaces = Array.isArray(data) ? data : [];
+      setWorkspaces(loadedWorkspaces);
+
+      const currentWorkspaceExists = loadedWorkspaces.some(
+        (workspace) => String(workspace.id) === String(workspaceId)
+      );
+
+      if (!currentWorkspaceExists) {
+        setWorkspaceId(
+          loadedWorkspaces.length > 0
+            ? String(loadedWorkspaces[0].id)
+            : ""
+        );
+      }
     } catch (error) {
       setWorkspaceError(error.message || "Could not load workspaces.");
     } finally {
