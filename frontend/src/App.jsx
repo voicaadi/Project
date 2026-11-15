@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
   LayoutDashboard,
@@ -67,12 +67,7 @@ function App() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceAction, setWorkspaceAction] = useState("");
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
-  const [terminalCommand, setTerminalCommand] = useState("");
-  const [terminalOutput, setTerminalOutput] = useState("Log in, then enter a Linux command.");
-  const [terminalLoading, setTerminalLoading] = useState(false);
   const [terminalError, setTerminalError] = useState("");
-  const terminalInputRef = useRef(null);
-  const terminalOutputRef = useRef(null);
   const terminalSocketRef = useRef(null);
   const xtermHostRef = useRef(null);
   const xtermRef = useRef(null);
@@ -93,7 +88,6 @@ function App() {
       setLoginEmail("");
       setLoginPassword("");
       setTerminalError("");
-      setTerminalOutput("Logged out. Please sign in to continue.");
     }
   };
 
@@ -137,7 +131,7 @@ function App() {
       .then(() => setBackend("Online"))
       .catch(() => setBackend("Offline"));
   }, []);
-  async function loadContainers() {
+  const loadContainers = useCallback(async () => {
     if (!accessToken || !workspaceId) return;
 
     setDockerLoading(true);
@@ -170,12 +164,12 @@ function App() {
     } finally {
       setDockerLoading(false);
     }
-  }
+  }, [accessToken, workspaceId]);
   useEffect(() => {
     if (accessToken && workspaceId) {
       loadContainers();
     }
-  }, [accessToken, workspaceId]);
+  }, [accessToken, workspaceId, loadContainers]);
   async function sendMessage(e) {
     e.preventDefault();
     const userMessage = message.trim();
@@ -219,7 +213,6 @@ function App() {
       setAccessToken(data.access_token);
       setLoggedInUser(data.user || { email: loginEmail });
       setLoginPassword("");
-      setTerminalOutput("");
     } catch (error) {
       setLoginError(error.message || "Could not log in.");
     }
@@ -294,7 +287,7 @@ function App() {
     }
   }
 
-  async function loadDevices() {
+  const loadDevices = useCallback(async () => {
     if (!accessToken) {
       setDevices([]);
       return;
@@ -322,9 +315,9 @@ function App() {
     } finally {
       setDevicesLoading(false);
     }
-  }
+  }, [accessToken]);
 
-  async function loadWorkspaces() {
+  const loadWorkspaces = useCallback(async () => {
     if (!accessToken) {
       setWorkspaces([]);
       return;
@@ -362,7 +355,7 @@ function App() {
     } finally {
       setWorkspacesLoading(false);
     }
-  }
+  }, [accessToken, workspaceId]);
 
   async function createWorkspace(e) {
     e.preventDefault();
@@ -521,7 +514,7 @@ function App() {
 
     loadDevices();
     loadWorkspaces();
-  }, [accessToken]);
+  }, [accessToken, loadDevices, loadWorkspaces]);
 
 
 async function registerAccount(e) {
@@ -653,22 +646,6 @@ async function resendVerificationEmail() {
   }
 }
 
-  function runTerminalCommand(e) {
-    e.preventDefault();
-    const command = terminalCommand;
-    if (!command.trim() || terminalLoading) return;
-    const socket = terminalSocketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setTerminalError("Terminal is not connected. Wait for the connection or sign in again.");
-      return;
-    }
-    // A PTY echoes the typed command and returns its output in the same stream.
-    // Send only the command plus Enter; do not add a second copy to the transcript.
-    socket.send(command + "\n");
-    setTerminalCommand("");
-    setTerminalError("");
-    terminalInputRef.current?.focus();
-  }
   useEffect(() => {
     // The terminal host is rendered only after login. Initialize xterm
     // when accessToken becomes available, not only on the first app render.
@@ -793,11 +770,6 @@ async function resendVerificationEmail() {
       }
     };
   }, [accessToken, workspaceId]);
-  useEffect(() => {
-    if (accessToken && terminalConnection === "Connected") {
-      terminalInputRef.current?.focus();
-    }
-  }, [accessToken, terminalConnection]);
   const runningCount = containers.filter(
     (container) => container.status === "running"
   ).length;
@@ -1633,6 +1605,11 @@ async function resendVerificationEmail() {
                     textAlign: "left",
                   }}
                 />
+                {terminalError && (
+                  <div role="alert" className="terminal-error">
+                    {terminalError}
+                  </div>
+                )}
               </div>
             </>
           )}
