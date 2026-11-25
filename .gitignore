@@ -26,3 +26,13 @@ agent/device-token.txt
 
 # Temporary credential files
 agent/device-token.tmp
+
+# Local staging credentials
+.secrets/
+
+# Local database backups
+backups/
+
+# Local staging credentials
+agent-staging/device-token.txt
+agent-staging/agent-token.txt
