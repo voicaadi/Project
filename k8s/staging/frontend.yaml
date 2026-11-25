@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-ai-frontend
+  namespace: devops-ai-staging
+  labels:
+    app: devops-ai-frontend
+    environment: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-ai-frontend
+  template:
+    metadata:
+      labels:
+        app: devops-ai-frontend
+        environment: staging
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/voicaadi/devops-ai-frontend:5b538328b7abd31b485caa4598bea3bb9777236d
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: devops-ai-staging
+  labels:
+    environment: staging
+spec:
+  type: ClusterIP
+  selector:
+    app: devops-ai-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
